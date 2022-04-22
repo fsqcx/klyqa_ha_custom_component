@@ -13,6 +13,7 @@ from homeassistant.helpers import config_entry_flow
 from . import api
 from .api import Klyqa
 from .const import CONF_POLLING, DEFAULT_CACHEDB, DOMAIN, LOGGER
+import homeassistant.helpers.config_validation as cv
 
 from homeassistant import config_entries
 from homeassistant.const import (
@@ -22,13 +23,23 @@ from homeassistant.const import (
     CONF_ROOM,
     CONF_USERNAME,
 )
+from .const import CONF_SYNC_ROOMS
 from homeassistant.data_entry_flow import FlowResult
+
+# user_step_data_schema = {
+#     vol.Required(CONF_USERNAME, default="frederick.stallmeyer1@qconnex.com"): cv.string,
+#     vol.Required(CONF_PASSWORD, default="testpwd1"): cv.string,
+#     vol.Required(CONF_SCAN_INTERVAL, default="60"): cv.string,
+#     vol.Required(CONF_SYNC_ROOMS, default=True): cv.boolean,
+#     vol.Required(CONF_HOST, default="http://localhost:3000"): cv.url,
+# }
+
 
 user_step_data_schema = {
     vol.Required(CONF_USERNAME, default="frederick.stallmeyer1@qconnex.com"): str,
     vol.Required(CONF_PASSWORD, default="testpwd1"): str,
-    vol.Required(CONF_SCAN_INTERVAL, default=60): integer,
-    vol.Required(CONF_ROOM, default=True): bool,
+    vol.Required(CONF_SCAN_INTERVAL, default=60): int,
+    vol.Required(CONF_SYNC_ROOMS, default=True): bool,
     vol.Required(CONF_HOST, default="http://localhost:3000"): str,
 }
 
@@ -104,8 +115,9 @@ class KlyqaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         self._username = user_input[CONF_USERNAME]
         self._password = user_input[CONF_PASSWORD]
+        self._scan_interval = user_input[CONF_SCAN_INTERVAL]
+        self._sync_rooms = user_input[CONF_SYNC_ROOMS]
         self._host = user_input[CONF_HOST]
-        self._polling = user_input[CONF_POLLING]
 
         return await self._async_klyqa_login(step_id="user")
 
@@ -113,16 +125,25 @@ class KlyqaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Handle login with Klyqa."""
         # self._cache = self.hass.config.path(DEFAULT_CACHEDB)
         errors = {}
+        if DOMAIN in self.hass.data:
+            self._klyqa = self.hass.data[DOMAIN]
+            try:
+                await self.hass.async_add_executor_job(self._klyqa.logout)
+            except Exception as e:
+                pass
 
         try:
 
-            self._klyqa: Klyqa = await self.hass.async_add_executor_job(
-                Klyqa,
+            self._klyqa: Klyqa = Klyqa(
                 self._username,
                 self._password,
                 self._host,
                 self.hass,
             )
+            if not await self.hass.async_add_executor_job(
+                self._klyqa.login,
+            ):
+                raise Exception("Unable to login")
 
             if self._klyqa:
                 self.hass.data[DOMAIN] = self._klyqa
@@ -153,7 +174,8 @@ class KlyqaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         config_data = {
             CONF_USERNAME: self._username,
             CONF_PASSWORD: self._password,
-            CONF_POLLING: self._polling,
+            CONF_SCAN_INTERVAL: self._scan_interval,
+            CONF_SYNC_ROOMS: self._sync_rooms,
             CONF_HOST: self._host,
         }
         existing_entry = await self.async_set_unique_id(self._username)

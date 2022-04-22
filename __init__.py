@@ -21,8 +21,9 @@ from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 from homeassistant.helpers.area_registry import AreaEntry, AreaRegistry
 import homeassistant.helpers.area_registry as area_registry
 
-from .const import DOMAIN, CONF_POLLING
+from .const import DOMAIN, CONF_POLLING, CONF_SYNC_ROOMS
 from .light import KlyqaLight
+from .api import Klyqa
 
 from homeassistant.const import (
     ATTR_ENTITY_ID,
@@ -43,11 +44,49 @@ async def async_setup(hass: HomeAssistant, yaml_config: ConfigType) -> bool:
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up Klyqa integration from a config entry."""
-    # username = entry.data[CONF_USERNAME]
-    # password = entry.data[CONF_PASSWORD]
-    # polling = entry.data[CONF_POLLING]
-    # host = entry.data[CONF_HOST]
+
+    """Set up or change Klyqa integration from a config entry."""
+
+    username = entry.data.get(CONF_USERNAME)
+    password = entry.data.get(CONF_PASSWORD)
+    host = entry.data.get(CONF_HOST)
+    # scan_interval = entry.data.get(CONF_SCAN_INTERVAL)
+    sync_rooms = (
+        entry.data.get(CONF_SYNC_ROOMS) if entry.data.get(CONF_SYNC_ROOMS) else False
+    )
+    klyqa_api: Klyqa
+    if DOMAIN in hass.data:
+        klyqa_api = hass.data[DOMAIN]
+        klyqa_api: Klyqa = await hass.async_add_executor_job(
+            klyqa_api.logout,
+        )
+
+        klyqa_api._username = username
+        klyqa_api._password = password
+        klyqa_api._host = host
+        klyqa_api.sync_rooms = sync_rooms
+    else:
+        klyqa_api: Klyqa = await hass.async_add_executor_job(
+            Klyqa,
+            username,
+            password,
+            host,
+            hass,
+            False,
+            sync_rooms,
+        )
+        hass.data[DOMAIN] = klyqa_api
+
+    if not await hass.async_add_executor_job(
+        klyqa_api.login,
+    ):
+        return False
+
+    hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, klyqa_api.shutdown)
+    await hass.async_add_executor_job(klyqa_api.load_settings)
+    # await hass.async_add_executor_job(klyqa.search_lights)
+
+    # hass.data.setdefault(DOMAIN, {})[entry.entry_id] = co
 
     # For previous config entries where unique_id is None
     if entry.unique_id is None:
@@ -58,9 +97,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.config_entries.async_setup_platforms(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
 
-    area_reg: AreaRegistry = area_registry.async_get(hass)
-    area_reg = await hass.helpers.area_registry.async_get_registry()
-    # area_reg.areas.get(area_id)
     return True
 
 

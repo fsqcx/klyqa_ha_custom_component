@@ -17,6 +17,7 @@ import requests
 
 from typing import Any, cast
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import area_registry as ar
 
 # pycryptodome
 try:
@@ -335,36 +336,44 @@ class Klyqa:
     _bearer = {}
 
     def __init__(
-        self, username, password, host, hass: HomeAssistant = None, disable_cache=False
+        self,
+        username,
+        password,
+        host,
+        hass: HomeAssistant = None,
+        disable_cache=False,
+        sync_rooms=True,
     ):
         self._username = username
         self._password = password
+        self.sync_rooms: bool = sync_rooms
         self._cache_path = DEFAULT_CACHEDB
         self._host = host
         self.hass = hass
 
-        # Create a new cache template
-        self._cache = {
-            "email": None,
-            "password": None,
-        }
+        # # Create a new cache template
+        # self._cache = {
+        #     "email": None,
+        #     "password": None,
+        # }
 
-        # Load and merge an existing cache
-        if not disable_cache:
-            self._load_cache()
+        # # Load and merge an existing cache
+        # if not disable_cache:
+        #     self._load_cache()
 
-        # If the username and password were passed in, update
-        # the cache and save
-        if username:
-            self._cache["email"] = username
+        # # If the username and password were passed in, update
+        # # the cache and save
+        # if username:
+        #     self._cache["email"] = username
 
-        if password:
-            self._cache["password"] = password
+        # if password:
+        #     self._cache["password"] = password
 
-        self._save_cache()
-        self.login()
+        # self._save_cache()
+        # self.login()
 
     def login(self) -> bool:
+        """Login to klyqa account."""
         self._access_token = ""
         self._account_token = ""
 
@@ -406,15 +415,26 @@ class Klyqa:
         return response_object
 
     def load_settings(self) -> bool:
-
+        """Load settings from klyqa account."""
         settings_response = self.request_get_beared("/settings")
         if settings_response.status_code != 200:
             return False
         self._settings = json.loads(settings_response.text)
 
+        if self.sync_rooms and len(self._settings["rooms"]) > 0:
+            LOGGER.debug("Applying rooms from klyqa accounts to Home Assistant")
+            # area_reg = self.hass.helpers.area_registry.async_get_registry()
+            area_reg = ar.async_get(self.hass)
+            for room in self._settings["rooms"]:
+                if not area_reg.async_get_area_by_name(
+                    room["name"]
+                ) and area_reg.async_create(room["name"]):
+                    LOGGER.info("New room created: %s", room["name"])
+
         return True
 
     def shutdown(self):
+        """Load settings from klyqa account."""
         response = requests.post(self._host + "/auth/logout", headers=self._bearer)
         for light in self.lights:
             if self.lights[light].socket:
@@ -425,11 +445,8 @@ class Klyqa:
 
     search_lights_mutex = threading.Lock()
 
-    def search_lights(self, **kwargs: Any):
-        u_id = None
-        seconds_to_discover = 10
-        if isinstance(kwargs, dict):
-            u_id = kwargs["u_id"] if "u_id" in kwargs else None
+    def search_lights(self, seconds_to_discover=10, u_id=None):
+        """Get a thread lock safe light searching broadcast of the klyqa bulbs."""
 
         while True:
             got_mutex = self.search_lights_mutex.acquire(blocking=False)
@@ -460,7 +477,7 @@ class Klyqa:
             if self.search_lights_mutex.acquire(blocking=True, timeout=100):
                 break
 
-        return_connection = self.__search_lights(**kwargs)
+        return_connection = self.__search_lights(seconds_to_discover, u_id)
 
         LOGGER.info(
             "Search for bulbs finished. " + str(threading.current_thread().ident),
@@ -468,27 +485,20 @@ class Klyqa:
         self.search_lights_mutex.release()
         return return_connection
 
-    def __search_lights(self, **kwargs: Any):
+    def __search_lights(self, seconds_to_discover=10, u_id=None):
         """
         If the local device id u_id is given, the function will search for lights
         and return the connection if the light with the u_id is found
         and a connection could be estasblished.
-        Kwargs:
+        Args:
             u_id: Local device id.
+            seconds_to_discover: Time to look for the lights from the account devices.
         returns:
             connection: If u_id is given.
         """
         LOGGER.info(
             "Search for bulbs ... " + str(threading.current_thread().ident),
         )
-
-        u_id = None
-        seconds_to_discover = 10
-        if isinstance(kwargs, dict):
-            u_id = kwargs["u_id"] if "u_id" in kwargs else None
-            seconds_to_discover = (
-                kwargs["seconds_to_discover"] if "seconds_to_discover" in kwargs else 10
-            )
 
         return_connection = None
         udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -570,7 +580,7 @@ class Klyqa:
 
         return
 
-    def send_to_bulb(self, *argv, **kwargs) -> dict:
+    def send_to_bulb(self, *argv, u_id=None, **kwargs) -> dict:
         """
         Sending commands to the bulb. Put the local device id (u_id) of the bulb
         in the kwargs arguments. It finds the connection to the bulb by the local device
@@ -592,32 +602,58 @@ class Klyqa:
         #     or not "u_id" in kwargs
         #     or not kwargs["u_id"] in self.lights
         # ):
-        if not (
-            isinstance(kwargs, dict)
-            and "u_id" in kwargs
-            and kwargs["u_id"] in self.lights
-        ):
+        # if not (
+        #     isinstance(kwargs, dict)
+        #     and "u_id" in kwargs
+        #     and kwargs["u_id"] in self.lights
+        # ):
+        #     return None
+        # else:
+        #     u_id = kwargs["u_id"]
+        if u_id not in self.lights:
             return None
-        else:
-            u_id = kwargs["u_id"]
 
         # TODO: intervally discover or rediscover bulbs probably in a coordinator class.
         # if len(self.lights) < len(self._settings["devices"]):  # self._settings.devices
         #     self.search_lights(1)
 
-        return self._send_to_bulb(*argv, connection=self.lights[u_id].connection)
+        response = None
+        TRY_MAX = 2
+        attempt_num = 1
+        while (
+            not (
+                response := self._send_to_bulb(
+                    *argv,
+                    connection=self.lights[u_id].connection,
+                    retry=attempt_num > 1,
+                )
+            )
+            and attempt_num <= TRY_MAX
+        ):
+            LOGGER.info("No answer from lamp %s. Try resend", str(u_id))
+            attempt_num = attempt_num + 1
+            if attempt_num >= TRY_MAX:
+                LOGGER.info("No answer from lamp %s. Try resend", str(u_id))
+
+        return response
 
     def search_missing_bulbs(self):
+        """TODO: this function is crap. we look if any bulb connection is missing and search then for it. therefore make a list of bulbs missing connection and then look for them."""
         if len(self.lights) < len(self._settings["devices"]):  # self._settings.devices
             self.search_lights()
 
-    def _send_to_bulb(self, *argv, **kwargs) -> dict:
+    def _send_to_bulb(self, *argv, retry=False, **kwargs) -> dict:
         """
         Sending commands to the bulb. Put the connection object to the bulb
         in the kwargs arguments.
 
         Argv:
             described in code (see parser)
+
+        Args:
+            retry (bool): On retry send (True) read tcp socket for data (answers) first, if there is return it.
+                          If not retry resend and try to read again.
+                          On False just send and read for response normal.
 
         Kwargs:
             connection (Connection): Tcp connection to the bulb.
@@ -906,7 +942,7 @@ class Klyqa:
                     else:
                         return
             except socket.timeout:
-                # LOGGER.debug("timeout")
+                LOGGER.debug("timeout")
                 # continue
                 pass
             except ConnectionResetError:
@@ -934,7 +970,9 @@ class Klyqa:
 
             elapsed = datetime.datetime.now() - last_send
 
-            if connection.state == STATE_CONNECTED:
+            """Resend message to lamp when retrying and no message has come yet to read.
+            Else read message below."""
+            if connection.state == STATE_CONNECTED and (not retry or len(data) == 0):
                 send_next = elapsed >= pause
                 if len(message_queue_tx) > 0 and send_next:
                     msg, ts = message_queue_tx.pop()

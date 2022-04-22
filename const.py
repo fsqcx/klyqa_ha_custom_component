@@ -13,3 +13,4 @@ DOMAIN = "klyqa"
 
 DEFAULT_CACHEDB = "klyqa.cache"
 CONF_POLLING = "polling"
+CONF_SYNC_ROOMS = "sync_rooms"

@@ -11,23 +11,23 @@
         "step": {
             "reauth_confirm": {
                 "data": {
-                    "password": "Password",
                     "username": "Email",
-                    "polling": "Polling interval",
-                    "rooms": "Apply Klyqa rooms",
+                    "password": "Password",
+                    "scan_interval": "Scan interval",
+                    "sync_rooms": "Synchronize Klyqa rooms",
                     "host": "Host"
                 },
                 "title": "Fill in your Klyqa login information"
             },
             "user": {
                 "data": {
-                    "password": "Password",
                     "username": "Email",
-                    "polling": "Polling interval",
-                    "rooms": "Apply Klyqa rooms",
+                    "password": "Password",
+                    "scan_interval": "Scan interval",
+                    "sync_rooms": "Synchronize Klyqa rooms",
                     "host": "Host"
                 },
-                "title": "Fill in your Klyqa login information and configurations."
+                "title": "Fill in your Klyqa login information and set your configuration."
             }
         }
     }
