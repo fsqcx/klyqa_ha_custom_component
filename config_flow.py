@@ -82,7 +82,7 @@ class KlyqaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._username: str | None = None
         self._password: str | None = None
         self._cache: str | None = None
-        self._polling: bool = False
+        self._scan_interval: int = 30
         self._host: str | None = None
         self._klyqa = None
         pass
@@ -128,7 +128,7 @@ class KlyqaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if DOMAIN in self.hass.data:
             self._klyqa = self.hass.data[DOMAIN]
             try:
-                await self.hass.async_add_executor_job(self._klyqa.logout)
+                await self.hass.async_add_executor_job(self._klyqa.shutdown)
             except Exception as e:
                 pass
 
@@ -139,6 +139,7 @@ class KlyqaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self._password,
                 self._host,
                 self.hass,
+                sync_rooms=self._sync_rooms,
             )
             if not await self.hass.async_add_executor_job(
                 self._klyqa.login,

@@ -57,9 +57,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     klyqa_api: Klyqa
     if DOMAIN in hass.data:
         klyqa_api = hass.data[DOMAIN]
-        klyqa_api: Klyqa = await hass.async_add_executor_job(
-            klyqa_api.logout,
-        )
+        await hass.async_add_executor_job(klyqa_api.shutdown)
 
         klyqa_api._username = username
         klyqa_api._password = password

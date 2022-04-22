@@ -436,9 +436,9 @@ class Klyqa:
         """Load settings from klyqa account."""
         response = requests.post(self._host + "/auth/logout", headers=self._bearer)
         for light in self.lights:
-            if self.lights[light].socket:
+            if self.lights[light].connection.socket:
                 try:
-                    self.lights[light].socket.close()
+                    self.lights[light].connection.socket.close()
                 except:
                     pass
 
@@ -941,7 +941,7 @@ class Klyqa:
                     else:
                         return
             except socket.timeout:
-                LOGGER.debug("timeout")
+                # LOGGER.debug("timeout")
                 # continue
                 pass
             except ConnectionResetError:

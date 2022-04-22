@@ -1,5 +1,14 @@
 # Klyqa Home Assistant Custom Integration
 
+## Lamp Support
+- Scene effects
+- Lamp temperature
+- Lamp RGB color
+- Lamp brightness
+- Lamp transition time
+- Lamp Rooms
+- Klyqa App Cloud synchronisation
+
 ## Install Home Assistant (HA)
 Local ways to install home assistant:<br />
 1) Docker:<br />
