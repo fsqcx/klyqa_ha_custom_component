@@ -11,12 +11,12 @@
 
 ## Install Home Assistant (HA)
 Local ways to install home assistant:<br />
-1) Docker:<br />
+1. Docker:<br />
 https://www.home-assistant.io/installation/linux#install-home-assistant-container<br />
 Make a config folder on your filesystem and tell the docker about the path.<br />
 <br />
 or<br /><br />
-2) Dev container (Visual Studio Code, docker with full debug support):<br />
+2. Dev container (Visual Studio Code, docker with full debug support):<br />
 ```
 git clone https://github.com/home-assistant/core.git
 ```
@@ -29,7 +29,7 @@ Add to .devcontainer/devcontainer.json runArgs network host mode so you can open
 Start HA with "start debug" or "run" in VS Code.
 
 or<br /><br />
-3) You have a Hass OS running and have access to it.<br />
+3. You have a Hass OS running and have access to it.<br />
 
 ## Developer Documentation
 
