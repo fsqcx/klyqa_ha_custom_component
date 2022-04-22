@@ -423,7 +423,6 @@ class Klyqa:
 
         if self.sync_rooms and len(self._settings["rooms"]) > 0:
             LOGGER.debug("Applying rooms from klyqa accounts to Home Assistant")
-            # area_reg = self.hass.helpers.area_registry.async_get_registry()
             area_reg = ar.async_get(self.hass)
             for room in self._settings["rooms"]:
                 if not area_reg.async_get_area_by_name(

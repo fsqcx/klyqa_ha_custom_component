@@ -59,9 +59,8 @@ from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 import homeassistant.util.color as color_util
 from homeassistant.config_entries import ConfigEntry
 
-from . import api
-from .api import Connection, SCENES, Klyqa, KlyqaLightDevice
-from .const import DOMAIN, CONF_POLLING, DEFAULT_CACHEDB, LOGGER
+from .api import SCENES, Klyqa, KlyqaLightDevice
+from .const import DOMAIN, LOGGER, CONF_SYNC_ROOMS
 
 # all deprecated, still here for testing, color_mode is the modern way to go ...
 SUPPORT_KLYQA = (
@@ -121,8 +120,10 @@ async def async_setup_klyqa(
         username = config.get(CONF_USERNAME)
         password = config.get(CONF_PASSWORD)
         host = config.get(CONF_HOST)
-        polling = config.get(CONF_POLLING)
-        hass.data[DOMAIN] = Klyqa(username, password, host, hass)
+        sync_rooms = (
+            config.get(CONF_SYNC_ROOMS) if config.get(CONF_SYNC_ROOMS) else False
+        )
+        hass.data[DOMAIN] = Klyqa(username, password, host, hass, sync_rooms=sync_rooms)
         if not await hass.async_add_executor_job(hass.data[DOMAIN].login):
             return
 
@@ -135,10 +136,6 @@ async def async_setup_klyqa(
     )
 
     entities = []
-
-    area_reg: AreaRegistry = area_registry.async_get(hass)
-    area_reg = await hass.helpers.area_registry.async_get_registry()
-    # area_reg.areas.get(area_id)
 
     for device_settings in klyqa._settings["devices"]:
         entity_id = generate_entity_id(
@@ -258,7 +255,6 @@ class KlyqaLight(LightEntity):
             configuration_url="https://www.klyqa.de/produkte/e27-color-lampe",  # TODO: Maybe exclude. Or make rest call for device url.
         )
         if len(self.rooms) > 0:
-            # area_reg = await self.hass.helpers.area_registry.async_get_registry()
             area_reg = ar.async_get(self.hass)
             area = area_reg.async_get_area_by_name(self.rooms[0]["name"])
             if area:
