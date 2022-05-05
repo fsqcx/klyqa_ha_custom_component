@@ -2,7 +2,7 @@
 
 ## Lamp Support
 - Scene effects
-- Lamp temperature
+- Lamp temperature color
 - Lamp RGB color
 - Lamp brightness
 - Lamp transition time

@@ -11,6 +11,6 @@ LOGGER = logging.getLogger(__package__)
 DOMAIN = "klyqa"
 
 
-DEFAULT_CACHEDB = "klyqa.cache"
 CONF_POLLING = "polling"
 CONF_SYNC_ROOMS = "sync_rooms"
+EVENT_KLYQA_NEW_SETTINGS = "klyqa_new_settings"

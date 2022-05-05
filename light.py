@@ -5,10 +5,16 @@ import json
 import socket
 
 from homeassistant.helpers.device_registry import DeviceEntryType
+from homeassistant.helpers.entity_registry import EntityRegistry
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import area_registry as ar
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.core import HomeAssistant, callback
+
 import voluptuous as vol
 
+from homeassistant.const import Platform
 
 from homeassistant.util.color import (
     color_temperature_kelvin_to_mired,
@@ -49,7 +55,6 @@ from homeassistant.const import (
     STATE_OFF,
     STATE_ON,
 )
-from homeassistant.core import HomeAssistant
 
 # Import the device class from the component that you want to support
 import homeassistant.helpers.config_validation as cv
@@ -59,8 +64,10 @@ from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 import homeassistant.util.color as color_util
 from homeassistant.config_entries import ConfigEntry
 
+from .coordinator import KlyqaDataUpdateCoordinator
+
 from .api import SCENES, Klyqa, KlyqaLightDevice
-from .const import DOMAIN, LOGGER, CONF_SYNC_ROOMS
+from .const import DOMAIN, LOGGER, CONF_SYNC_ROOMS, EVENT_KLYQA_NEW_SETTINGS
 
 # all deprecated, still here for testing, color_mode is the modern way to go ...
 SUPPORT_KLYQA = (
@@ -77,21 +84,22 @@ import functools as ft
 from homeassistant.helpers.area_registry import AreaEntry, AreaRegistry
 import homeassistant.helpers.area_registry as area_registry
 
-SCAN_INTERVAL = timedelta(seconds=3)
+# SCAN_INTERVAL = timedelta(seconds=8)
 
 
 async def async_setup(hass: HomeAssistant, yaml_config: ConfigType) -> bool:
+    """Expose light control via state machine and services."""
+    # component = hass.data[DOMAIN] = EntityComponent(
+    #     _LOGGER, DOMAIN, hass, SCAN_INTERVAL, GROUP_NAME_ALL_LIGHTS
+    # )
+    # await component.async_setup(config)
     return True
 
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
-    await async_setup_klyqa(
-        hass,
-        entry.data,
-        async_add_entities,
-    )
+    await async_setup_klyqa(hass, entry.data, async_add_entities, entry=entry)
 
 
 async def async_setup_platform(
@@ -113,6 +121,7 @@ async def async_setup_klyqa(
     config: ConfigType,
     add_entities: AddEntitiesCallback,
     discovery_info: DiscoveryInfoType | None = None,
+    entry: ConfigEntry | None = None,
 ) -> None:
     """Set up the Klyqa Light platform."""
 
@@ -127,47 +136,76 @@ async def async_setup_klyqa(
         if not await hass.async_add_executor_job(hass.data[DOMAIN].login):
             return
 
-    klyqa: Klyqa = hass.data[DOMAIN]
+    if entry:
+        coordinator: KlyqaDataUpdateCoordinator = hass.data[DOMAIN].entries[
+            entry.entry_id
+        ]
+        klyqa: Klyqa = coordinator.klyqa_api
+        # klyqa: Klyqa = hass.data[DOMAIN][entry.entry_id]
+    else:
+        klyqa: Klyqa = hass.data[DOMAIN].klyqa
 
     hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, klyqa.shutdown)
-    await hass.async_add_executor_job(klyqa.load_settings)
-    await hass.async_add_executor_job(
-        ft.partial(klyqa.search_lights, seconds_to_discover=1)
-    )
+    # await hass.async_add_executor_job(klyqa.load_settings)
+    # await hass.async_add_executor_job(
+    #     ft.partial(klyqa.search_lights, seconds_to_discover=2)
+    # )
+    await klyqa.search_lights(seconds_to_discover=2)
 
-    entities = []
+    entity_registry = er.async_get(hass)
 
-    for device_settings in klyqa._settings["devices"]:
-        entity_id = generate_entity_id(
-            ENTITY_ID_FORMAT,
-            device_settings["localDeviceId"],
-            hass=hass,
-        )
-        u_id = device_settings["localDeviceId"]
+    # coordinator.add_entities = add_entities
+    # @callback
+    async def add_new_entities(settings: list[str] = None) -> None:
+        entities = []
 
-        light_state = klyqa.lights[u_id] if u_id in klyqa.lights else KlyqaLightDevice()
-        rooms = []
-        for room in klyqa._settings["rooms"]:
-            for device in room["devices"]:
-                if device["localDeviceId"] == u_id:
-                    rooms.append(room)
-        # TODO: perhaps the routines can be put into automations or scenes in HA
-        routines = []
-        for routine in klyqa._settings["routines"]:
-            for task in routine["tasks"]:
-                for device in task["devices"]:
-                    if device == u_id:
-                        routines.append(routine)
-        # TODO: same for timers.
-        timers = []
-        for timer in klyqa._settings["timers"]:
-            for task in timer["tasks"]:
-                for device in task["devices"]:
-                    if device == u_id:
-                        timers.append(timer)
+        # for device_settings in klyqa._settings.get("deviceGroups"):
+        #     entities.append(
+        #         KlyqaLight(
+        #             device_settings,
+        #             light_state,
+        #             klyqa,
+        #             entity_id,
+        #             should_poll=True,
+        #             rooms=rooms,
+        #             timers=timers,
+        #             routines=routines,
+        #         )
+        #     )
+        for device_settings in klyqa._settings.get("devices"):
+            entity_id = generate_entity_id(
+                ENTITY_ID_FORMAT,
+                device_settings.get("localDeviceId"),
+                hass=hass,
+            )
+            if entity_registry.async_is_registered(entity_id):
+                LOGGER.info(f"Entity {entity_id} is already registered. Skip")
+                continue
+            u_id = device_settings.get("localDeviceId")
 
-        entities.append(
-            KlyqaLight(
+            light_state = (
+                klyqa.lights[u_id] if u_id in klyqa.lights else KlyqaLightDevice()
+            )
+            rooms = []
+            for room in klyqa._settings.get("rooms"):
+                for device in room.get("devices"):
+                    if device.get("localDeviceId") == u_id:
+                        rooms.append(room)
+            # TODO: perhaps the routines can be put into automations or scenes in HA
+            routines = []
+            for routine in klyqa._settings.get("routines"):
+                for task in routine.get("tasks"):
+                    for device in task.get("devices"):
+                        if device == u_id:
+                            routines.append(routine)
+            # TODO: same for timers.
+            timers = []
+            for timer in klyqa._settings.get("timers"):
+                for task in timer.get("tasks"):
+                    for device in task.get("devices"):
+                        if device == u_id:
+                            timers.append(timer)
+            entity = KlyqaLight(
                 device_settings,
                 light_state,
                 klyqa,
@@ -176,13 +214,31 @@ async def async_setup_klyqa(
                 rooms=rooms,
                 timers=timers,
                 routines=routines,
+                config_entry=entry,
+                hass=hass,
+                coordinator=coordinator,
             )
-        )
+            entities.append(entity)
+            hass.bus.async_listen(EVENT_KLYQA_UPDATE_ENTITY, entity.async_update2)
 
-    add_entities(entities, True)
+        add_entities(entities, True)
+
+    hass.data[DOMAIN].remove_listeners.append(
+        hass.bus.async_listen(EVENT_KLYQA_NEW_SETTINGS, add_new_entities)
+    )
+
+    # await hass.async_add_executor_job(
+    # hass.bus.async_listen, EVENT_KLYQA_NEW_SETTINGS, add_new_entities
+    # )
+    await add_new_entities()
 
 
-class KlyqaLight(LightEntity):
+import asyncio
+
+EVENT_KLYQA_UPDATE_ENTITY = "klyqa_event_update_entity"
+
+
+class KlyqaLight(CoordinatorEntity, LightEntity):
     """Representation of a Klyqa Light."""
 
     _attr_supported_features = SUPPORT_KLYQA
@@ -191,8 +247,15 @@ class KlyqaLight(LightEntity):
     _klyqa_api: Klyqa
     _klyqa_device: KlyqaLightDevice
     settings = {}
-    """synchrononise rooms to HA"""
+    """synchronise rooms to HA"""
     sync_rooms: bool = True
+    config_entry: ConfigEntry | None = None
+    entity_registry: EntityRegistry | None = None
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle data update."""
+        self.hass.bus.fire(EVENT_KLYQA_UPDATE_ENTITY, self)
 
     def __init__(
         self,
@@ -204,10 +267,16 @@ class KlyqaLight(LightEntity):
         rooms=None,
         timers=None,
         routines=None,
+        config_entry=None,
+        hass=None,
+        coordinator=None,
     ):
         """Initialize a Klyqa Light Bulb."""
+        self.hass = hass
+        self.coordinator: KlyqaDataUpdateCoordinator = coordinator
+        self.entity_registry = er.async_get(hass)
         self._klyqa_api = klyqa_api
-        self.u_id = settings["localDeviceId"]
+        self.u_id = settings.get("localDeviceId")
         self._klyqa_device = device
         self.entity_id = entity_id
         self._attr_should_poll = should_poll
@@ -223,11 +292,12 @@ class KlyqaLight(LightEntity):
             # COLOR_MODE_RGBWW
         }
         self._attr_effect_list = [x["label"] for x in SCENES]
+        self.config_entry = config_entry
         """Entity state will be updated after adding the entity."""
 
     async def async_update_settings(self):
         """Set device specific settings from the klyqa settings cloud."""
-        devices_settings = self._klyqa_api._settings["devices"]
+        devices_settings = self._klyqa_api._settings.get("devices")
 
         device_result = [
             x for x in devices_settings if str(x["localDeviceId"]) == self.u_id
@@ -243,22 +313,55 @@ class KlyqaLight(LightEntity):
         self.device_config = json.loads(response_object.text)
 
         self.settings = device_result[0]
-        self._attr_name = self.settings["name"]
-        self._attr_unique_id = self.settings["localDeviceId"]
+        self._attr_name = self.settings.get("name")
+        self._attr_unique_id = self.settings.get("localDeviceId")
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, self._attr_unique_id)},
             name=self.name,
             manufacturer="QConnex GmbH",
-            model=self.settings["productId"],  # TODO: Maybe exclude.
-            sw_version=self.settings["firmwareVersion"],
-            hw_version=self.settings["hardwareRevision"],  # TODO: Maybe exclude.
-            configuration_url="https://www.klyqa.de/produkte/e27-color-lampe",  # TODO: Maybe exclude. Or make rest call for device url.
+            model=self.settings.get("productId"),
+            sw_version=self.settings.get("firmwareVersion"),
+            hw_version=self.settings.get("hardwareRevision"),
+            configuration_url="https://www.klyqa.de/produkte/e27-color-lampe",
         )
+
         if len(self.rooms) > 0:
             area_reg = ar.async_get(self.hass)
-            area = area_reg.async_get_area_by_name(self.rooms[0]["name"])
+            area = area_reg.async_get_area_by_name(self.rooms[0].get("name"))
             if area:
                 self._attr_device_info["suggested_area"] = area.name
+
+                # async_get_or_create
+
+                entity_registry = er.async_get(self.hass)
+                re = entity_registry.async_get_entity_id(
+                    Platform.LIGHT, DOMAIN, self.unique_id
+                )
+                ent_id = entity_registry.async_get(re)
+                # ent_id = entity_registry.async_get(self.entity_id)
+                if ent_id:
+                    entity_registry.async_update_entity(
+                        entity_id=ent_id.entity_id, area_id=area.name
+                    )
+
+                device_registry = dr.async_get(self.hass)
+                # dev = device_registry.async_get_or_create(
+                #     config_entry_id=self.config_entry.entry_id
+                #     ** self._attr_device_info
+                #     # config_entry_id=config_entry.entry_id,
+                #     # identifiers={(AGENT_DOMAIN, agent_client.unique)},
+                #     # manufacturer="iSpyConnect",
+                #     # name=f"Agent {agent_client.name}",
+                #     # model="Agent DVR",
+                #     # sw_version=agent_client.version,
+                # )
+                # re = device_registry.async_get_or_create(Platform.LIGHT, DOMAIN, {(DOMAIN, self._attr_unique_id)})
+                # dev_id = device_registry.async_get(re)
+                # if dev_id:
+                # if dev and dev.id:
+                #     device_registry.async_update_device(
+                #         device_id=dev.id, area_id=area.name
+                #     )
 
     @property
     def entity_registry_enabled_default(self) -> bool:
@@ -267,11 +370,7 @@ class KlyqaLight(LightEntity):
 
     async def async_turn_on(self, **kwargs):
         """Instruct the light to turn off."""
-
-        entity_registry = er.async_get(self.hass)
-
-        await self.async_update_klyqa()
-        args = ["--power", "on"]
+        args = []
 
         if ATTR_HS_COLOR in kwargs:
             rgb = color_util.color_hs_to_RGB(*kwargs[ATTR_HS_COLOR])
@@ -299,7 +398,7 @@ class KlyqaLight(LightEntity):
                 if len(commands.split(";")) > 2:
                     commands += "l 0;"
 
-                ret = self._klyqa_api.send_to_bulb(
+                ret = await self._klyqa_api.send_to_bulb(
                     "--routine_id",
                     "0",
                     "--routine_scene",
@@ -309,6 +408,19 @@ class KlyqaLight(LightEntity):
                     commands,
                     u_id=self.u_id,
                 )
+                # ret = await self.hass.async_add_executor_job(
+                #     ft.partial(
+                #         self._klyqa_api.send_to_bulb,
+                #         "--routine_id",
+                #         "0",
+                #         "--routine_scene",
+                #         str(scene["id"]),
+                #         "--routine_put",
+                #         "--routine_command",
+                #         commands,
+                #         u_id=self.u_id,
+                #     )
+                # )
                 if ret:
                     args.extend(
                         [
@@ -331,12 +443,6 @@ class KlyqaLight(LightEntity):
                 ]
             )
 
-        if ATTR_TRANSITION in kwargs:
-            self._attr_transition_time = kwargs[ATTR_TRANSITION]
-
-        if self._attr_transition_time:
-            args.extend(["--transitionTime", str(self._attr_transition_time)])
-
         if ATTR_BRIGHTNESS in kwargs:
             self._attr_brightness = kwargs[ATTR_BRIGHTNESS]
             args.extend(
@@ -349,53 +455,130 @@ class KlyqaLight(LightEntity):
             )
             args.extend(["--brightness", str(ATTR_BRIGHTNESS_PCT)])
 
+        """separate power on+transition and other lamp attributes."""
+
+        if len(args) > 0:
+
+            if ATTR_TRANSITION in kwargs:
+                self._attr_transition_time = kwargs[ATTR_TRANSITION]
+
+            if self._attr_transition_time:
+                args.extend(["--transitionTime", str(self._attr_transition_time)])
+
+            LOGGER.info(
+                "Send to bulb " + str(self.entity_id) + "%s: %s",
+                " (" + self.name + ")" if self.name else "",
+                " ".join(args),
+            )
+
+            # ret = await self.hass.async_add_executor_job(
+            #     ft.partial(self._klyqa_api.send_to_bulb, *(args), u_id=self.u_id)
+            # )
+            ret = await self._klyqa_api.send_to_bulb(*(args), u_id=self.u_id)
+
+        # if ret:
+        args = ["--power", "on"]
+
+        if ATTR_TRANSITION in kwargs:
+            self._attr_transition_time = kwargs[ATTR_TRANSITION]
+
+        if self._attr_transition_time:
+            args.extend(["--transitionTime", str(self._attr_transition_time)])
+
         LOGGER.info(
             "Send to bulb " + str(self.entity_id) + "%s: %s",
             " (" + self.name + ")" if self.name else "",
             " ".join(args),
         )
-        ret = self._klyqa_api.send_to_bulb(*(args), u_id=self.u_id)
-        await self.async_update()
+
+        # ret = await self.hass.async_add_executor_job(
+        #     ft.partial(self._klyqa_api.send_to_bulb, *(args), u_id=self.u_id)
+        # )
+        ret = await self._klyqa_api.send_to_bulb(*(args), u_id=self.u_id)
+        self._handle_coordinator_update()
 
     async def async_turn_off(self, **kwargs):
         """Instruct the light to turn off."""
+
         args = ["--power", "off"]
+
         if self._attr_transition_time:
             args.extend(["--transitionTime", str(self._attr_transition_time)])
-        await self.async_update_klyqa()
+
         LOGGER.info(
             "Send to bulb " + str(self.entity_id) + "%s: %s",
             " (" + self.name + ")" if self.name else "",
             " ".join(args),
         )
-        ret = self._klyqa_api.send_to_bulb(*(args), u_id=self.u_id)
-        await self.async_update()
+
+        # ret = await self.hass.async_add_executor_job(
+        #     ft.partial(self._klyqa_api.send_to_bulb, *(args), u_id=self.u_id)
+        # )
+
+        ret = await self._klyqa_api.send_to_bulb(*(args), u_id=self.u_id)
+        if ret:
+            pass
+        self._handle_coordinator_update()  # Update the data
+        # await self.coordinator.async_request_refresh()
 
     async def async_update_klyqa(self):
         """Fetch settings from klyqa cloud account."""
         await self.hass.async_add_executor_job(self._klyqa_api.load_settings)
         await self.async_update_settings()
-        # if self._attr_state == STATE_UNAVAILABLE:
-        #     await self.hass.async_add_executor_job(self._klyqa_api.search_missing_bulbs)
 
     async def async_update(self):
-        """Fetch new state data for this light.
+        """Fetch new state data for this light. Called by HA."""
 
-        This is the only method that should fetch new data for Home Assistant.
-        """
+        LOGGER.info(
+            "Update bulb " + str(self.entity_id) + "%s.",
+            " (" + self.name + ")" if self.name else "",
+        )
+
+        entity_registry = er.async_get(self.hass)
+        re = entity_registry.async_get_entity_id(Platform.LIGHT, DOMAIN, self.unique_id)
+        ent_id = entity_registry.async_get(re)
+        if ent_id:
+            entity_registry.async_update_entity(
+                entity_id=ent_id.entity_id, area_id="wohnzimmer"
+            )
+
         await self.async_update_klyqa()
-        ret = self._klyqa_api.send_to_bulb("--request", u_id=self.u_id)
+        # ret = await self.hass.async_add_executor_job(
+        #     ft.partial(self._klyqa_api.send_to_bulb, "--request", u_id=self.u_id)
+        # )
+
+        ret = await self._klyqa_api.send_to_bulb("--request", u_id=self.u_id)
         self._update_state(ret)
+
+    async def async_update2(self, *args, **kwargs):
+        """Fetch new state data for this light. Called by HA."""
+
+        LOGGER.info(
+            "Update bulb " + str(self.entity_id) + "%s.",
+            " (" + self.name + ")" if self.name else "",
+        )
+
+        entity_registry = er.async_get(self.hass)
+        re = entity_registry.async_get_entity_id(Platform.LIGHT, DOMAIN, self.unique_id)
+        ent_id = entity_registry.async_get(re)
+        if ent_id:
+            entity_registry.async_update_entity(
+                entity_id=ent_id.entity_id, area_id="wohnzimmer"
+            )
+
+        ret = await self._klyqa_api.send_to_bulb("--request", u_id=self.u_id)
+        self._update_state(ret)
+        self.async_write_ha_state()
 
     def _update_state(self, state_complete):
         """Process state request response from the bulb to the entity state."""
-        # self.state = STATE_OK if state_complete else STATE_UNAVAILABLE
         self._attr_state = STATE_OK if state_complete else STATE_UNAVAILABLE
         if self._attr_state == STATE_UNAVAILABLE:
             self._attr_is_on = False
-            # self._attr_available = False
+            self._attr_assumed_state = True
         else:
             self._attr_available = True
+            self._attr_assumed_state = False
 
         if not self._attr_state:
             LOGGER.info(
@@ -406,8 +589,8 @@ class KlyqaLight(LightEntity):
         if not state_complete or not isinstance(state_complete, dict):
             return
 
-        LOGGER.info(
-            "Update bulb " + str(self.entity_id) + "%s.",
+        LOGGER.debug(
+            "Update bulb state " + str(self.entity_id) + "%s.",
             " (" + self.name + ")" if self.name else "",
         )
 

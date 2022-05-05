@@ -15,9 +15,9 @@ import threading
 import uuid
 import requests
 
-from typing import Any, cast
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import area_registry as ar
+import functools as ft
 
 # pycryptodome
 try:
@@ -27,7 +27,7 @@ except:
     from Crypto.Cipher import AES
     from Crypto.Random import get_random_bytes
 
-from .const import CONF_POLLING, DEFAULT_CACHEDB, DOMAIN, LOGGER
+from .const import LOGGER
 
 STATE_CONNECTED = "CONNECTED"
 STATE_WAIT_IV = "WAIT_IV"
@@ -204,12 +204,6 @@ SCENES = [
 ]
 
 
-def reply_field(reply, field) -> str:
-    if reply and field in reply:
-        return reply[field]
-    return ""
-
-
 class Connection:
     sending_aes = None
     receiving_aes = None
@@ -327,6 +321,9 @@ class KlyqaLightDevice:
         self.connection = connection
 
 
+from threading import Thread
+
+
 class Klyqa:
     """Klyqa Manager Module"""
 
@@ -334,6 +331,60 @@ class Klyqa:
     _access_token = ""
     _account_token = ""
     _bearer = {}
+    _settings = {}
+
+    __search_lights_mutex = threading.Lock()
+    # __sending_mutex = threading.Lock() """exclude searching from multiple sending threads"""
+    __send_search_mutex = threading.Lock()
+    __send_workers = []
+    __search_worker: Thread = None
+
+    def set_send_search_worker(
+        self, search_worker: Thread = None, send_worker: Thread = None
+    ) -> bool:
+        # with threadLock:
+        # global_counter += 1
+        got_mutex = False
+        while True:
+            got_mutex = self.__send_search_mutex.acquire(blocking=False)
+            if got_mutex:
+                if search_worker:
+                    if len(self.__send_workers) == 0:
+                        if not self.__search_worker:
+                            self.__search_worker = search_worker
+                            break
+                elif send_worker:
+                    if not self.__search_worker:
+                        if len(self.__send_workers) < 10:
+                            self.__send_workers.append(send_worker)
+                            break
+
+            time.sleep(0.05)
+
+        if got_mutex:
+            self.__send_search_mutex.release()
+
+    def remove_send_search_worker(self, search_worker=None, send_worker=None) -> bool:
+        # with threadLock:
+        # global_counter += 1
+        got_mutex = False
+        while True:
+            got_mutex = self.__send_search_mutex.acquire(blocking=False)
+            if got_mutex:
+                if search_worker:
+                    if len(self.__send_workers) == 0:
+                        if not self.__search_worker == -1:
+                            self.__search_worker = search_worker
+                            break
+                elif send_worker:
+                    if self.__search_worker == -1:
+                        self.__send_workers.append(send_worker)
+                        break
+
+            time.sleep(0.05)
+
+        if got_mutex:
+            self.__send_search_mutex.release()
 
     def __init__(
         self,
@@ -341,36 +392,13 @@ class Klyqa:
         password,
         host,
         hass: HomeAssistant = None,
-        disable_cache=False,
         sync_rooms=True,
     ):
         self._username = username
         self._password = password
         self.sync_rooms: bool = sync_rooms
-        self._cache_path = DEFAULT_CACHEDB
         self._host = host
         self.hass = hass
-
-        # # Create a new cache template
-        # self._cache = {
-        #     "email": None,
-        #     "password": None,
-        # }
-
-        # # Load and merge an existing cache
-        # if not disable_cache:
-        #     self._load_cache()
-
-        # # If the username and password were passed in, update
-        # # the cache and save
-        # if username:
-        #     self._cache["email"] = username
-
-        # if password:
-        #     self._cache["password"] = password
-
-        # self._save_cache()
-        # self.login()
 
     def login(self) -> bool:
         """Login to klyqa account."""
@@ -378,7 +406,11 @@ class Klyqa:
         self._account_token = ""
 
         login_data = {"email": self._username, "password": self._password}
-        login_response = requests.post(self._host + "/auth/login", json=login_data)
+        try:
+            login_response = requests.post(self._host + "/auth/login", json=login_data)
+        except Exception as err:
+            LOGGER.error("Login to Klyqa failed: " + str(err))
+            return False
 
         if login_response.status_code != 200 and login_response.status_code != 201:
             print(str(login_response.status_code) + ", " + str(login_response.text))
@@ -386,8 +418,8 @@ class Klyqa:
 
         login_json = json.loads(login_response.text)
 
-        self._access_token = login_json["accessToken"]
-        self._account_token = login_json["accountToken"]
+        self._access_token = login_json.get("accessToken")
+        self._account_token = login_json.get("accountToken")
 
         self._bearer = {
             "Authorization": "Bearer " + self._access_token,
@@ -406,9 +438,6 @@ class Klyqa:
         response = requests.get(self._host + url, params, **kwargs)
         return response
 
-    # async def async_request_get(self, url, params=None, **kwargs):
-    #     return await self.hass.async_add_executor_job(self.request_get, url, params, **kwargs)
-
     def request_get_beared(self, url, params=None, **kwargs):
         """Send request get and if logged out login again."""
         response_object = self.request_get(url, params, headers=self._bearer, **kwargs)
@@ -419,16 +448,21 @@ class Klyqa:
         settings_response = self.request_get_beared("/settings")
         if settings_response.status_code != 200:
             return False
-        self._settings = json.loads(settings_response.text)
+        if settings_response.text:
+            try:
+                self._settings = json.loads(settings_response.text)
 
-        if self.sync_rooms and len(self._settings["rooms"]) > 0:
-            LOGGER.debug("Applying rooms from klyqa accounts to Home Assistant")
-            area_reg = ar.async_get(self.hass)
-            for room in self._settings["rooms"]:
-                if not area_reg.async_get_area_by_name(
-                    room["name"]
-                ) and area_reg.async_create(room["name"]):
-                    LOGGER.info("New room created: %s", room["name"])
+                if self.sync_rooms and len(self._settings.get("rooms")) > 0:
+                    LOGGER.debug("Applying rooms from klyqa accounts to Home Assistant")
+                    area_reg = ar.async_get(self.hass)
+                    for room in self._settings.get("rooms"):
+                        if not area_reg.async_get_area_by_name(
+                            room.get("name")
+                        ) and area_reg.async_create(room.get("name")):
+                            LOGGER.info("New room created: %s", room.get("name"))
+            except:
+                LOGGER.debug("Couldn't load settings")
+                return False
 
         return True
 
@@ -436,29 +470,34 @@ class Klyqa:
         """Load settings from klyqa account."""
         response = requests.post(self._host + "/auth/logout", headers=self._bearer)
         for light in self.lights:
-            if self.lights[light].connection.socket:
+            if self.lights.get(light).connection.socket:
                 try:
-                    self.lights[light].connection.socket.close()
+                    self.lights.get(light).connection.socket.close()
                 except:
                     pass
 
-    search_lights_mutex = threading.Lock()
+    async def search_missing_bulbs(self):
+        """TODO: this function is crap. we look if any bulb connection is missing and search then for it. therefore make a list of bulbs missing connection and then look for them."""
+        if len(self.lights) < len(
+            self._settings.get("devices")
+        ):  # self._settings.devices
+            await self.search_lights()
 
-    def search_lights(self, seconds_to_discover=10, u_id=None):
+    async def search_lights(self, seconds_to_discover=10, u_id=None):
         """Get a thread lock safe light searching broadcast of the klyqa bulbs."""
 
         while True:
-            got_mutex = self.search_lights_mutex.acquire(blocking=False)
+            got_mutex = self.__search_lights_mutex.acquire(blocking=False)
             if not got_mutex and not u_id:
+                """another thread is already searching for all lights"""
                 return None
-            # If looking for unit_id connection, check if current is now established
-            # (in parallel possible) . Then return it.
             if (
                 u_id
                 and u_id in self.lights
                 and not self.lights[u_id].connection.socket._closed
             ):
-                state = self._send_to_bulb(
+                """Found a connection of unit_id. Ping it to check it's working."""
+                state = await self._send_to_bulb(
                     "--ping",
                     connection=self.lights[u_id].connection,
                     reconnect=False,
@@ -472,19 +511,23 @@ class Klyqa:
                 except Exception:
                     pass
             if got_mutex:
+                # self.__search_lights_mutex_type = MUTEX_SEARCHING
                 break
-            if self.search_lights_mutex.acquire(blocking=True, timeout=100):
+            if self.__search_lights_mutex.acquire(blocking=True, timeout=100):
                 break
+            # time.sleep(0.2)
 
-        return_connection = self.__search_lights(seconds_to_discover, u_id)
+            await asyncio.sleep(0.2)
+
+        return_connection = await self.__search_lights(seconds_to_discover, u_id)
 
         LOGGER.info(
             "Search for bulbs finished. " + str(threading.current_thread().ident),
         )
-        self.search_lights_mutex.release()
+        self.__search_lights_mutex.release()
         return return_connection
 
-    def __search_lights(self, seconds_to_discover=10, u_id=None):
+    async def __search_lights(self, seconds_to_discover=10, u_id=None):
         """
         If the local device id u_id is given, the function will search for lights
         and return the connection if the light with the u_id is found
@@ -493,7 +536,10 @@ class Klyqa:
             u_id: Local device id.
             seconds_to_discover: Time to look for the lights from the account devices.
         returns:
-            connection: If u_id is given.
+            connection: If u_id is given and new connection could be established.
+
+        It keeps searching by broadcasting for devices as long as the seconds to discover
+        are not reached and when we are looking for a specific connection to device.
         """
         LOGGER.info(
             "Search for bulbs ... " + str(threading.current_thread().ident),
@@ -516,13 +562,13 @@ class Klyqa:
         time_started = datetime.datetime.now()
         seconds_left = datetime.timedelta(milliseconds=0)
 
-        self.connection_threads = []
-
         lights_found_num = 0
-        settings_lights_num = len(self._settings["devices"])
+        # settings_lights_num = len(self._settings.get("devices"))
         while (
-            lights_found_num < settings_lights_num
-            and seconds_left.seconds < seconds_to_discover
+            not return_connection
+            # and
+            # lights_found_num < settings_lights_num and
+            # seconds_left.seconds < seconds_to_discover
         ):
             LOGGER.debug("Broadcasting QCX-SYN Burst\n")
             read_burst_response = True
@@ -535,43 +581,57 @@ class Klyqa:
                 if tcp in readable:
                     connection = Connection()
                     connection.socket, connection.address = tcp.accept()
+
                     # almost disable blocking socket
                     connection.socket.settimeout(0.001)
                     lights_found_num = lights_found_num + 1
-                    state = self._send_to_bulb(
+
+                    # finish the handshake in the send bulb function
+                    # Get there the local device id (u_id)
+                    state = await self.__send_to_bulb(
                         "--request", connection=connection, reconnect=False
                     )
-                    if state:
+                    if state and (
+                        not connection.u_id in self.lights
+                        or not self.lights[connection.u_id].connection
+                        or not self.lights[connection.u_id].connection.socket
+                        or self.lights[connection.u_id].connection.socket._closed
+                    ):
                         if (
                             connection.u_id in self.lights
                             and self.lights[connection.u_id].connection.socket
                             is not None
                         ):
-                            # don't close open connections
-                            if not self.lights[
-                                connection.u_id
-                            ].connection.socket._closed:
-                                connection.socket.close()
-                                continue
+                            # if not self.lights[
+                            #     connection.u_id
+                            # ].connection.socket._closed:
+                            #     connection.socket.close()
+                            #     continue
 
-                            # if there is still a open connection try to close it
+                            # always replace new connections with old once. (TODO: Is it the standard behaviour in the firmware?)
+                            # if there is still an open connection try to close it
                             try:
                                 self.lights[connection.u_id].connection.socket.close()
                             except Exception as ex:
                                 pass
-                        # TODO: Make self.lights better name light_states maybe.
+
                         self.lights[connection.u_id] = KlyqaLightDevice(
                             state=state, connection=connection
                         )
+                        #
                         if connection.u_id == u_id:
                             return_connection = connection
 
                     LOGGER.debug("TCP layer connected")
                 else:
                     break
-
-            time.sleep(0.2)
+            if seconds_to_discover == 0:
+                break
+            # time.sleep(0.2)
+            await asyncio.sleep(0.2)
             seconds_left = datetime.datetime.now() - time_started
+            if seconds_left.seconds >= seconds_to_discover:
+                break
 
         tcp.close()
         if return_connection is not None:
@@ -579,7 +639,7 @@ class Klyqa:
 
         return
 
-    def send_to_bulb(self, *argv, u_id=None, **kwargs) -> dict:
+    async def send_to_bulb(self, *argv, u_id=None, **kwargs) -> dict:
         """
         Sending commands to the bulb. Put the local device id (u_id) of the bulb
         in the kwargs arguments. It finds the connection to the bulb by the local device
@@ -596,32 +656,16 @@ class Klyqa:
             Json object: The answer of the bulb if successful.
             None: Else.
         """
-        # if (
-        #     not isinstance(kwargs, dict)
-        #     or not "u_id" in kwargs
-        #     or not kwargs["u_id"] in self.lights
-        # ):
-        # if not (
-        #     isinstance(kwargs, dict)
-        #     and "u_id" in kwargs
-        #     and kwargs["u_id"] in self.lights
-        # ):
-        #     return None
-        # else:
-        #     u_id = kwargs["u_id"]
         if u_id not in self.lights:
+            self.search_lights(u_id=u_id, seconds_to_discover=0)
             return None
-
-        # TODO: intervally discover or rediscover bulbs probably in a coordinator class.
-        # if len(self.lights) < len(self._settings["devices"]):  # self._settings.devices
-        #     self.search_lights(1)
 
         response = None
         TRY_MAX = 2
         attempt_num = 1
         while (
             not (
-                response := self._send_to_bulb(
+                response := await self._send_to_bulb(
                     *argv,
                     connection=self.lights[u_id].connection,
                     retry=attempt_num > 1,
@@ -629,19 +673,40 @@ class Klyqa:
             )
             and attempt_num <= TRY_MAX
         ):
-            LOGGER.info("No answer from lamp %s. Try resend", str(u_id))
+            LOGGER.warning("No answer from lamp %s. Try resend", str(u_id))
             attempt_num = attempt_num + 1
-            if attempt_num >= TRY_MAX:
-                LOGGER.info("No answer from lamp %s. Try resend", str(u_id))
+            if attempt_num > TRY_MAX:
+                LOGGER.error("No answer from lamp %s.", str(u_id))
+                break
 
         return response
 
-    def search_missing_bulbs(self):
-        """TODO: this function is crap. we look if any bulb connection is missing and search then for it. therefore make a list of bulbs missing connection and then look for them."""
-        if len(self.lights) < len(self._settings["devices"]):  # self._settings.devices
-            self.search_lights()
+    async def _send_to_bulb(self, *argv, **kwargs) -> dict:
 
-    def _send_to_bulb(self, *argv, retry=False, **kwargs) -> dict:
+        started = datetime.datetime.now()
+
+        while True:
+            got_mutex = self.__search_lights_mutex.acquire(blocking=False)
+
+            if got_mutex:
+                # self.__search_lights_mutex_type = MUTEX_SENDING
+                break
+            # time.sleep(0.2)
+            await asyncio.sleep(0.2)
+            elapsed = datetime.datetime.now() - started
+            if elapsed > datetime.timedelta(seconds=10):
+                return
+
+        return_value = await self.__send_to_bulb(*argv, **kwargs)
+
+        if got_mutex:
+            self.__search_lights_mutex.release()
+
+        return return_value
+
+    async def __send_to_bulb(
+        self, *argv, connection, reconnect=True, retry=False, **kwargs
+    ) -> dict:
         """
         Sending commands to the bulb. Put the connection object to the bulb
         in the kwargs arguments.
@@ -662,13 +727,14 @@ class Klyqa:
             Json object: The answer of the bulb if successful.
             None: Else.
         """
-        if not isinstance(kwargs, dict) or not "connection" in kwargs:
-            return ""
-        connection: Connection = kwargs["connection"]
+        # if not "connection" in kwargs:
+        #     return
 
-        reconnect = True
-        if "reconnect" in kwargs:
-            reconnect = kwargs["reconnect"]
+        # connection: Connection = kwargs["connection"]
+
+        # reconnect = True
+        # if "reconnect" in kwargs:
+        #     reconnect = kwargs["reconnect"]
 
         if not connection.local_iv:
             connection.state = STATE_WAIT_IV
@@ -879,7 +945,7 @@ class Klyqa:
                             "commands": args.routine_commands,
                         }
                     ),
-                    500,
+                    1000,
                 )
             )
 
@@ -915,12 +981,11 @@ class Klyqa:
         message_queue_tx.reverse()
         last_send = datetime.datetime.now()
 
-        def do_reconnect():
+        async def do_reconnect():
             """Try reconnect only once per send."""
             nonlocal reconnect, self
             reconnect = False
-            # self.load_settings()
-            return self.search_lights(u_id=connection.u_id)
+            return await self.__search_lights(u_id=connection.u_id)
 
         if connection.socket._closed:
             connection = do_reconnect()
@@ -931,35 +996,18 @@ class Klyqa:
         while len(message_queue_tx) > 0 or elapsed < pause or args.party:
             try:
                 data = connection.socket.recv(4096)
-                if data == "":
-                    print("wrong")
                 if len(data) == 0:
                     LOGGER.debug("EOF")
                     if reconnect:
-                        connection = do_reconnect()
+                        connection = await do_reconnect()
                         continue
                     else:
                         return
             except socket.timeout:
-                # LOGGER.debug("timeout")
-                # continue
                 pass
-            except ConnectionResetError:
-                if reconnect:
-                    connection = do_reconnect()
-                    continue
-                else:
-                    return
-            except socket.error as e:
-                if e.errno != errno.ECONNRESET and reconnect:
-                    if reconnect:
-                        connection = do_reconnect()
-                        continue
-                    reconnect = False
             except Exception as exception:
-                # if e.errno != errno.ECONNRESET and reconnect:
                 if reconnect:
-                    connection = do_reconnect()
+                    connection = await do_reconnect()
                     if connection:
                         continue
                     else:
@@ -975,7 +1023,8 @@ class Klyqa:
                 send_next = elapsed >= pause
                 if len(message_queue_tx) > 0 and send_next:
                     msg, ts = message_queue_tx.pop()
-                    pause = datetime.timedelta(milliseconds=ts)
+                    # pause = datetime.timedelta(milliseconds=ts)
+                    pause = datetime.timedelta(milliseconds=10000)  # 10secs max timeout
                     if not send_msg(connection.socket, msg, connection.sending_aes):
                         """Upon send error, try reconnect to the lamps and append message for transmission again."""
                         try:
@@ -983,8 +1032,8 @@ class Klyqa:
                         except Exception as exception:
                             pass
                         if reconnect:
-                            connection = do_reconnect()
-                            if connection:
+                            connection = await do_reconnect()
+                            if connection and retry:
                                 message_queue_tx.append((msg, ts))
                             else:
                                 return None
@@ -1028,7 +1077,7 @@ class Klyqa:
                     LOGGER.debug("Plain: " + str(pkg))
                     response_object = json.loads(pkg)
                     connection.u_id = response_object["ident"]["unit_id"]
-                    for device in self._settings["devices"]:
+                    for device in self._settings.get("devices"):
                         if device["localDeviceId"] == connection.u_id:
                             aes_key = bytes.fromhex(device["aesKey"])
                             break
@@ -1057,9 +1106,11 @@ class Klyqa:
                     response_plain = connection.receiving_aes.decrypt(cipher)
                     response_decoded = ""
                     try:
-                        response_decoded = response_plain.decode("utf-8")
+                        response_decoded = response_plain.decode("utf-8", "ignore")
                     except Exception as exception:
                         response_decoded = str(response_plain)
+                        LOGGER.warning("Couldn't decode lamp TCP response (not utf-8?)")
+                        LOGGER.debug("Respone plain: " + response_decoded)
                     uid = connection.u_id + " " if connection.u_id else ""
                     LOGGER.debug("Decrypted: " + uid + response_decoded)
                     try:
@@ -1069,46 +1120,7 @@ class Klyqa:
                     if connection.u_id and connection.u_id in self.lights:
                         self.lights[connection.u_id].state = response
                     return response
+            if not (len(message_queue_tx) > 0 or elapsed < pause or args.party):
+                LOGGER.warning("TCP receive pause exceeded, stop receiving... ")
 
-    def _load_cache(self):
-        """Load existing cache and merge for updating if required."""
-        if os.path.exists(self._cache_path):
-            LOGGER.debug("Cache found at: %s", self._cache_path)
-            loaded_cache = self._load_cache_filesystem()
-
-            if loaded_cache:
-                self.update(self._cache, loaded_cache)
-            else:
-                LOGGER.debug("Removing invalid cache file: %s", self._cache_path)
-                os.remove(self._cache_path)
-
-        self._save_cache()
-
-    def _load_cache_filesystem(self):
-        """Load cache file from the filesystem."""
-        filename = self._cache_path
-        with open(filename, "rb") as handle:
-            try:
-                return pickle.load(handle)
-            except EOFError:
-                LOGGER.warning("Empty pickle file: %s", filename)
-            except (pickle.UnpicklingError, ValueError):
-                LOGGER.warning("Corrupted pickle file: %s", filename)
-
-            return None
-
-    def update(self, dct, dct_merge):
-        """Recursively merge dicts."""
-        for key, value in dct_merge.items():
-            if key in dct and isinstance(dct[key], dict):
-                dct[key] = self.update(dct[key], value)
-            else:
-                dct[key] = value
-        return dct
-
-    def _save_cache(self, data=None):
-        filename = self._cache_path
-        data = self._cache
-        """Save login data to file."""
-        with open(filename, "wb") as handle:
-            pickle.dump(data, handle)
+        LOGGER.warning("Something in sending went wrong...")
