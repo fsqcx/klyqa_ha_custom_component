@@ -109,14 +109,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     ):
         return False
 
-    coordinator = KlyqaDataUpdateCoordinator(
-        hass, klyqa_api, timedelta(seconds=int(scan_interval))
-    )
-    await coordinator.async_config_entry_first_refresh()
+    # coordinator = KlyqaDataUpdateCoordinator(
+    #     hass, klyqa_api, timedelta(seconds=int(scan_interval))
+    # )
+    # await coordinator.async_config_entry_first_refresh()
 
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
 
-    hass.data.setdefault(DOMAIN, {}).entries[entry.entry_id] = coordinator
+    # hass.data.setdefault(DOMAIN, {}).entries[entry.entry_id] = coordinator
 
     hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, klyqa_api.shutdown)
     # await hass.async_add_executor_job(klyqa_api.load_settings)

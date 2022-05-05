@@ -9,7 +9,8 @@ from homeassistant.helpers.entity_registry import EntityRegistry
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
+
+# from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.core import HomeAssistant, callback
 
 import voluptuous as vol
@@ -64,7 +65,7 @@ from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 import homeassistant.util.color as color_util
 from homeassistant.config_entries import ConfigEntry
 
-from .coordinator import KlyqaDataUpdateCoordinator
+# from .coordinator import KlyqaDataUpdateCoordinator
 
 from .api import SCENES, Klyqa, KlyqaLightDevice
 from .const import DOMAIN, LOGGER, CONF_SYNC_ROOMS, EVENT_KLYQA_NEW_SETTINGS
@@ -137,16 +138,16 @@ async def async_setup_klyqa(
             return
 
     if entry:
-        coordinator: KlyqaDataUpdateCoordinator = hass.data[DOMAIN].entries[
-            entry.entry_id
-        ]
-        klyqa: Klyqa = coordinator.klyqa_api
-        # klyqa: Klyqa = hass.data[DOMAIN][entry.entry_id]
+        # coordinator: KlyqaDataUpdateCoordinator = hass.data[DOMAIN].entries[
+        #     entry.entry_id
+        # ]
+        # klyqa: Klyqa = coordinator.klyqa_api
+        klyqa: Klyqa = hass.data[DOMAIN].entries[entry.entry_id]
     else:
         klyqa: Klyqa = hass.data[DOMAIN].klyqa
 
     hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, klyqa.shutdown)
-    # await hass.async_add_executor_job(klyqa.load_settings)
+    await hass.async_add_executor_job(klyqa.load_settings)
     # await hass.async_add_executor_job(
     #     ft.partial(klyqa.search_lights, seconds_to_discover=2)
     # )
@@ -216,10 +217,10 @@ async def async_setup_klyqa(
                 routines=routines,
                 config_entry=entry,
                 hass=hass,
-                coordinator=coordinator,
+                # coordinator=coordinator,
             )
             entities.append(entity)
-            hass.bus.async_listen(EVENT_KLYQA_UPDATE_ENTITY, entity.async_update2)
+            # hass.bus.async_listen(EVENT_KLYQA_UPDATE_ENTITY, entity.async_update2)
 
         add_entities(entities, True)
 
@@ -227,9 +228,9 @@ async def async_setup_klyqa(
         hass.bus.async_listen(EVENT_KLYQA_NEW_SETTINGS, add_new_entities)
     )
 
-    # await hass.async_add_executor_job(
-    # hass.bus.async_listen, EVENT_KLYQA_NEW_SETTINGS, add_new_entities
-    # )
+    await hass.async_add_executor_job(
+        hass.bus.async_listen, EVENT_KLYQA_NEW_SETTINGS, add_new_entities
+    )
     await add_new_entities()
 
 
@@ -238,7 +239,8 @@ import asyncio
 EVENT_KLYQA_UPDATE_ENTITY = "klyqa_event_update_entity"
 
 
-class KlyqaLight(CoordinatorEntity, LightEntity):
+# class KlyqaLight(CoordinatorEntity, LightEntity):
+class KlyqaLight(LightEntity):
     """Representation of a Klyqa Light."""
 
     _attr_supported_features = SUPPORT_KLYQA
@@ -252,10 +254,10 @@ class KlyqaLight(CoordinatorEntity, LightEntity):
     config_entry: ConfigEntry | None = None
     entity_registry: EntityRegistry | None = None
 
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        """Handle data update."""
-        self.hass.bus.fire(EVENT_KLYQA_UPDATE_ENTITY, self)
+    # @callback
+    # def _handle_coordinator_update(self) -> None:
+    #     """Handle data update."""
+    #     self.hass.bus.fire(EVENT_KLYQA_UPDATE_ENTITY, self)
 
     def __init__(
         self,
@@ -269,11 +271,11 @@ class KlyqaLight(CoordinatorEntity, LightEntity):
         routines=None,
         config_entry=None,
         hass=None,
-        coordinator=None,
+        # coordinator=None,
     ):
         """Initialize a Klyqa Light Bulb."""
         self.hass = hass
-        self.coordinator: KlyqaDataUpdateCoordinator = coordinator
+        # self.coordinator: KlyqaDataUpdateCoordinator = coordinator
         self.entity_registry = er.async_get(hass)
         self._klyqa_api = klyqa_api
         self.u_id = settings.get("localDeviceId")
@@ -495,7 +497,8 @@ class KlyqaLight(CoordinatorEntity, LightEntity):
         #     ft.partial(self._klyqa_api.send_to_bulb, *(args), u_id=self.u_id)
         # )
         ret = await self._klyqa_api.send_to_bulb(*(args), u_id=self.u_id)
-        self._handle_coordinator_update()
+        # self._handle_coordinator_update()
+        await self.async_update()
 
     async def async_turn_off(self, **kwargs):
         """Instruct the light to turn off."""
@@ -518,13 +521,27 @@ class KlyqaLight(CoordinatorEntity, LightEntity):
         ret = await self._klyqa_api.send_to_bulb(*(args), u_id=self.u_id)
         if ret:
             pass
-        self._handle_coordinator_update()  # Update the data
+        # self._handle_coordinator_update()  # Update the data
         # await self.coordinator.async_request_refresh()
+        await self.async_update()
 
     async def async_update_klyqa(self):
         """Fetch settings from klyqa cloud account."""
         await self.hass.async_add_executor_job(self._klyqa_api.load_settings)
         await self.async_update_settings()
+
+        for d in self._klyqa_api._settings["devices"]:
+            u_id = d["localDeviceId"]
+            light = [
+                e
+                for e in self.hass.data["light"].entities
+                if hasattr(e, "u_id") and e.u_id == u_id
+            ]
+            if len(light) == 0:
+                # await self.hass.data["light"].async_add_entities()
+                self.hass.bus.async_fire(
+                    EVENT_KLYQA_NEW_SETTINGS, self._klyqa_api._settings
+                )
 
     async def async_update(self):
         """Fetch new state data for this light. Called by HA."""

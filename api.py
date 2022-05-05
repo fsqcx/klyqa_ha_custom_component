@@ -657,7 +657,7 @@ class Klyqa:
             None: Else.
         """
         if u_id not in self.lights:
-            self.search_lights(u_id=u_id, seconds_to_discover=0)
+            await self.search_lights(u_id=u_id, seconds_to_discover=0)
             return None
 
         response = None
@@ -1077,7 +1077,13 @@ class Klyqa:
                     LOGGER.debug("Plain: " + str(pkg))
                     response_object = json.loads(pkg)
                     connection.u_id = response_object["ident"]["unit_id"]
-                    for device in self._settings.get("devices"):
+                    devices = {}
+                    if not self._settings or not (
+                        devices := self._settings.get("devices")
+                    ):
+                        LOGGER.warn("No Klyqa settings found. Stop searching lights")
+                        return
+                    for device in devices:
                         if device["localDeviceId"] == connection.u_id:
                             aes_key = bytes.fromhex(device["aesKey"])
                             break
