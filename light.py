@@ -16,6 +16,7 @@ from homeassistant.core import HomeAssistant, callback
 import voluptuous as vol
 
 from homeassistant.const import Platform
+from homeassistant.helpers.entity_component import EntityComponent
 
 from homeassistant.util.color import (
     color_temperature_kelvin_to_mired,
@@ -179,7 +180,10 @@ async def async_setup_klyqa(
                 device_settings.get("localDeviceId"),
                 hass=hass,
             )
-            if entity_registry.async_is_registered(entity_id):
+            light_c: EntityComponent = hass.data["light"]
+            if light_c.get_entity(
+                entity_id
+            ):  # entity_registry.async_is_registered(entity_id):
                 LOGGER.info(f"Entity {entity_id} is already registered. Skip")
                 continue
             u_id = device_settings.get("localDeviceId")
@@ -234,8 +238,6 @@ async def async_setup_klyqa(
     await add_new_entities()
 
 
-import asyncio
-
 EVENT_KLYQA_UPDATE_ENTITY = "klyqa_event_update_entity"
 
 
@@ -253,6 +255,8 @@ class KlyqaLight(LightEntity):
     sync_rooms: bool = True
     config_entry: ConfigEntry | None = None
     entity_registry: EntityRegistry | None = None
+    """entity added finished"""
+    _added_klyqa: bool = False
 
     # @callback
     # def _handle_coordinator_update(self) -> None:
@@ -530,18 +534,19 @@ class KlyqaLight(LightEntity):
         await self.hass.async_add_executor_job(self._klyqa_api.load_settings)
         await self.async_update_settings()
 
-        for d in self._klyqa_api._settings["devices"]:
-            u_id = d["localDeviceId"]
-            light = [
-                e
-                for e in self.hass.data["light"].entities
-                if hasattr(e, "u_id") and e.u_id == u_id
-            ]
-            if len(light) == 0:
-                # await self.hass.data["light"].async_add_entities()
-                self.hass.bus.async_fire(
-                    EVENT_KLYQA_NEW_SETTINGS, self._klyqa_api._settings
-                )
+        if self._added_klyqa:
+            for d in self._klyqa_api._settings["devices"]:
+                u_id = d["localDeviceId"]
+                light = [
+                    e
+                    for e in self.hass.data["light"].entities
+                    if hasattr(e, "u_id") and e.u_id == u_id
+                ]
+                if len(light) == 0:
+                    # await self.hass.data["light"].async_add_entities()
+                    self.hass.bus.async_fire(
+                        EVENT_KLYQA_NEW_SETTINGS, self._klyqa_api._settings
+                    )
 
     async def async_update(self):
         """Fetch new state data for this light. Called by HA."""
@@ -586,6 +591,11 @@ class KlyqaLight(LightEntity):
         ret = await self._klyqa_api.send_to_bulb("--request", u_id=self.u_id)
         self._update_state(ret)
         self.async_write_ha_state()
+
+    async def async_added_to_hass(self) -> None:
+        """Set up trigger automation service."""
+        await super().async_added_to_hass()
+        self._added_klyqa = True
 
     def _update_state(self, state_complete):
         """Process state request response from the bulb to the entity state."""
