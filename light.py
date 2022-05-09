@@ -220,6 +220,10 @@ async def async_setup_klyqa(
         #             routines=routines,
         #         )
         #     )
+
+        if not klyqa._settings:
+            return
+
         for device_settings in klyqa._settings.get("devices"):
             entity_id = generate_entity_id(
                 ENTITY_ID_FORMAT,

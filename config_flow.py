@@ -46,6 +46,15 @@ user_step_data_schema = {
 }
 
 
+# user_step_data_schema = {
+#     vol.Required(CONF_USERNAME): str,
+#     vol.Required(CONF_PASSWORD): str,
+#     vol.Required(CONF_SCAN_INTERVAL, default=60): int,
+#     vol.Required(CONF_SYNC_ROOMS, default=True): bool,
+#     vol.Required(CONF_HOST): str,
+# }
+
+
 class OptionsFlowHandler(config_entries.OptionsFlow):
     def __init__(self, config_entry):
         """Initialize options flow."""
