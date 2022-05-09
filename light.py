@@ -101,7 +101,35 @@ async def async_setup(hass: HomeAssistant, yaml_config: ConfigType) -> bool:
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
-    await async_setup_klyqa(hass, entry.data, async_add_entities, entry=entry)
+    klyqa = None
+
+    if not entry.entry_id in hass.data[DOMAIN].entries:
+        # coordinator: KlyqaDataUpdateCoordinator = hass.data[DOMAIN].entries[
+        #     entry.entry_id
+        # ]
+        # klyqa: Klyqa = coordinator.klyqa_api
+        # username = entry.data.get(CONF_USERNAME)
+        # password = entry.data.get(CONF_PASSWORD)
+        # host = entry.data.get(CONF_HOST)
+        # sync_rooms = (
+        #     entry.data.get(CONF_SYNC_ROOMS)
+        #     if entry.data.get(CONF_SYNC_ROOMS)
+        #     else False
+        # )
+        hass.data[DOMAIN].entries[entry.entry_id] = await create_klyqa_api_from_config(
+            hass, entry.data
+        )
+        # hass.data[DOMAIN].entries[entry.entry_id] = Klyqa(
+        #     username, password, host, hass, sync_rooms=sync_rooms
+        # )
+        klyqa: Klyqa = hass.data[DOMAIN].entries[entry.entry_id]
+        if not await hass.async_add_executor_job(klyqa.login):
+            return
+
+    klyqa: Klyqa = hass.data[DOMAIN].entries[entry.entry_id]
+    await async_setup_klyqa(
+        hass, entry.data, async_add_entities, entry=entry, klyqa=klyqa
+    )
 
 
 async def async_setup_platform(
@@ -110,42 +138,60 @@ async def async_setup_platform(
     add_entities: AddEntitiesCallback,
     discovery_info: DiscoveryInfoType | None = None,
 ) -> None:
+    klyqa = None
+    if hasattr(hass.data[DOMAIN], "klyqa"):
+        klyqa: Klyqa = hass.data[DOMAIN].klyqa
+    else:
+        klyqa = await create_klyqa_api_from_config(hass, config)
     await async_setup_klyqa(
         hass,
         config,
         add_entities,
-        discovery_info,
+        klyqa=klyqa,
+        discovery_info=discovery_info,
     )
+
+
+async def create_klyqa_api_from_config(hass, config: ConfigType) -> Klyqa:
+    username = config.get(CONF_USERNAME)
+    password = config.get(CONF_PASSWORD)
+    host = config.get(CONF_HOST)
+    sync_rooms = config.get(CONF_SYNC_ROOMS) if config.get(CONF_SYNC_ROOMS) else False
+    klyqa = Klyqa(username, password, host, hass, sync_rooms=sync_rooms)
+    if not await hass.async_add_executor_job(klyqa.login):
+        return
+    return klyqa
 
 
 async def async_setup_klyqa(
     hass: HomeAssistant,
     config: ConfigType,
     add_entities: AddEntitiesCallback,
+    klyqa,
     discovery_info: DiscoveryInfoType | None = None,
     entry: ConfigEntry | None = None,
 ) -> None:
     """Set up the Klyqa Light platform."""
 
-    if not DOMAIN in hass.data:
-        username = config.get(CONF_USERNAME)
-        password = config.get(CONF_PASSWORD)
-        host = config.get(CONF_HOST)
-        sync_rooms = (
-            config.get(CONF_SYNC_ROOMS) if config.get(CONF_SYNC_ROOMS) else False
-        )
-        hass.data[DOMAIN] = Klyqa(username, password, host, hass, sync_rooms=sync_rooms)
-        if not await hass.async_add_executor_job(hass.data[DOMAIN].login):
-            return
+    # if not DOMAIN in hass.data:
+    #     username = config.get(CONF_USERNAME)
+    #     password = config.get(CONF_PASSWORD)
+    #     host = config.get(CONF_HOST)
+    #     sync_rooms = (
+    #         config.get(CONF_SYNC_ROOMS) if config.get(CONF_SYNC_ROOMS) else False
+    #     )
+    #     hass.data[DOMAIN] = Klyqa(username, password, host, hass, sync_rooms=sync_rooms)
+    #     if not await hass.async_add_executor_job(hass.data[DOMAIN].login):
+    #         return
 
-    if entry:
-        # coordinator: KlyqaDataUpdateCoordinator = hass.data[DOMAIN].entries[
-        #     entry.entry_id
-        # ]
-        # klyqa: Klyqa = coordinator.klyqa_api
-        klyqa: Klyqa = hass.data[DOMAIN].entries[entry.entry_id]
-    else:
-        klyqa: Klyqa = hass.data[DOMAIN].klyqa
+    # if entry:
+    #     # coordinator: KlyqaDataUpdateCoordinator = hass.data[DOMAIN].entries[
+    #     #     entry.entry_id
+    #     # ]
+    #     # klyqa: Klyqa = coordinator.klyqa_api
+    #     klyqa: Klyqa = hass.data[DOMAIN].entries[entry.entry_id]
+    # else:
+    #     klyqa: Klyqa = hass.data[DOMAIN].klyqa
 
     hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, klyqa.shutdown)
     await hass.async_add_executor_job(klyqa.load_settings)

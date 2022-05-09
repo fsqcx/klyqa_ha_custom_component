@@ -52,6 +52,8 @@ SCAN_INTERVAL = timedelta(seconds=10)
 
 async def async_setup(hass: HomeAssistant, yaml_config: ConfigType) -> bool:
     """Set up the klyqa component."""
+    if DOMAIN in hass.data:
+        return True
     component = hass.data[DOMAIN] = EntityComponent(LOGGER, DOMAIN, hass, SCAN_INTERVAL)
     await component.async_setup(yaml_config)
     component.entries = {}
@@ -151,9 +153,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     if DOMAIN in hass.data:
         if entry.entry_id in hass.data[DOMAIN].entries:
-            if hass.data[DOMAIN].entries[entry.entry_id].klyqa_api:
+            # if hass.data[DOMAIN].entries[entry.entry_id].klyqa_api:
+            if hass.data[DOMAIN].entries[entry.entry_id]:
                 await hass.async_add_executor_job(
-                    hass.data[DOMAIN].entries[entry.entry_id].klyqa_api.shutdown
+                    hass.data[DOMAIN].entries[entry.entry_id].shutdown
                 )
             hass.data[DOMAIN].entries.pop(entry.entry_id)
 
