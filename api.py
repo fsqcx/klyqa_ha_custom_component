@@ -19,6 +19,9 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import area_registry as ar
 import functools as ft
 
+from .const import REQUEST_TIMEOUT
+
+
 # pycryptodome
 try:
     from Cryptodome.Cipher import AES
@@ -442,6 +445,22 @@ class Klyqa:
         """Send request get and if logged out login again."""
         response_object = self.request_get(url, params, headers=self._bearer, **kwargs)
         return response_object
+
+    def websocket(self):
+        ret = self.request_get(
+            url="/auth/profile",
+            timeout=REQUEST_TIMEOUT,
+        )
+        return ret
+
+    # const REQUEST_TIMEOUT = 11000
+    #   const response = await axios({
+    #     method: 'GET',
+    #     baseURL: api,
+    #     url: '/auth/profile',
+    #     timeout: ,
+    #     headers: createHeaders({ accountToken, requestId }),
+    #   })
 
     def load_settings(self) -> bool:
         """Load settings from klyqa account."""
@@ -1087,11 +1106,6 @@ class Klyqa:
                         if device["localDeviceId"] == connection.u_id:
                             aes_key = bytes.fromhex(device["aesKey"])
                             break
-                    if not aes_key:
-                        LOGGER.warn(
-                            f"Lamp {connection.u_id} not onboarded in account {self._username}"
-                        )
-                        return None
 
                     connection.socket.send(bytes([0, 8, 0, 1]) + connection.local_iv)
 
