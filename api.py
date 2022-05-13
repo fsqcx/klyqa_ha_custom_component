@@ -12,6 +12,7 @@ import os
 import errno
 import threading
 
+import websockets
 import uuid
 import requests
 
@@ -20,6 +21,18 @@ from homeassistant.helpers import area_registry as ar
 import functools as ft
 
 from .const import REQUEST_TIMEOUT
+
+
+class SocketEvents:
+    DEVICE_STATE = "deviceState"
+    REGISTER = "register"
+    CONNECT = "connect"
+    SETTINGS = "settings"
+    PUBLISH_STATE = "publishState"
+    SYNC_DEVICE_STATE = "syncDeviceState"
+    PUBLISH_SETTINGS = "publishSettings"
+    SYNC_SETTINGS = "syncSettings"
+    EMAIL_APPROVED = "emailApproved"
 
 
 # pycryptodome
@@ -431,6 +444,12 @@ class Klyqa:
             "Content-Type": "application/json",
             "accept-encoding": "gzip, deflate, utf-8",
         }
+
+        self.profile = self.request_get_beared(
+            url="/auth/profile",
+            timeout=REQUEST_TIMEOUT,
+        )
+
         return True
 
     def request_get(self, url, params=None, **kwargs):
@@ -443,15 +462,17 @@ class Klyqa:
 
     def request_get_beared(self, url, params=None, **kwargs):
         """Send request get and if logged out login again."""
+        self._bearer["X-Request-Id"] = str(uuid.uuid4())
         response_object = self.request_get(url, params, headers=self._bearer, **kwargs)
         return response_object
 
-    def websocket(self):
-        ret = self.request_get(
-            url="/auth/profile",
-            timeout=REQUEST_TIMEOUT,
-        )
-        return ret
+    async def websocket(self):
+        # self.websocket = websockets.unix_connect("https://app-api.test.qconnex.io")
+
+        # self.websocket.emit(SocketEvents.REGISTER, self.profile["smoId"])
+        # await websocket.send("Hello world!")
+        # await websocket.recv()
+        return None  # ret
 
     # const REQUEST_TIMEOUT = 11000
     #   const response = await axios({
@@ -565,18 +586,23 @@ class Klyqa:
         )
 
         return_connection = None
-        udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        udp.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        udp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            udp.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            udp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
-        server_address = ("0.0.0.0", 2222)
-        udp.bind(server_address)
+            server_address = ("0.0.0.0", 2222)
+            udp.bind(server_address)
 
-        tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        tcp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        server_address = ("0.0.0.0", 3333)
-        tcp.bind(server_address)
-        tcp.listen()
+            tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            tcp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            server_address = ("0.0.0.0", 3333)
+
+            tcp.bind(server_address)
+            tcp.listen()
+        except Exception as e:
+            LOGGER.warn(str(e))
+            return None
 
         time_started = datetime.datetime.now()
         seconds_left = datetime.timedelta(milliseconds=0)
@@ -1106,11 +1132,21 @@ class Klyqa:
                         if device["localDeviceId"] == connection.u_id:
                             aes_key = bytes.fromhex(device["aesKey"])
                             break
+                    if not aes_key:
+                        LOGGER.warn(
+                            f"Lamp {connection.u_id} not onboarded in account {self._username}"
+                        )
+                        return None
 
                     connection.socket.send(bytes([0, 8, 0, 1]) + connection.local_iv)
 
                 if connection.state == STATE_WAIT_IV and pkg_type == 1:
                     connection.remote_iv = pkg
+                    if not aes_key:
+                        LOGGER.warn(
+                            f"Lamp {connection.u_id} not onboarded in account {self._username}"
+                        )
+                        return None
 
                     connection.sending_aes = AES.new(
                         aes_key,

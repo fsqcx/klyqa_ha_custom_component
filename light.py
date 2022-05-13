@@ -10,6 +10,8 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
 
+from homeassistant.util import dt as dt_util, ensure_unique_string, slugify
+
 # from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.core import HomeAssistant, callback
 
@@ -72,13 +74,7 @@ from .api import SCENES, Klyqa, KlyqaLightDevice
 from .const import DOMAIN, LOGGER, CONF_SYNC_ROOMS, EVENT_KLYQA_NEW_SETTINGS
 
 # all deprecated, still here for testing, color_mode is the modern way to go ...
-SUPPORT_KLYQA = (
-    SUPPORT_BRIGHTNESS
-    | SUPPORT_COLOR
-    | SUPPORT_COLOR_TEMP
-    | SUPPORT_TRANSITION
-    | SUPPORT_EFFECT
-)
+SUPPORT_KLYQA = SUPPORT_BRIGHTNESS | SUPPORT_TRANSITION
 
 from datetime import timedelta
 import functools as ft
@@ -225,11 +221,12 @@ async def async_setup_klyqa(
             return
 
         for device_settings in klyqa._settings.get("devices"):
-            entity_id = generate_entity_id(
-                ENTITY_ID_FORMAT,
-                device_settings.get("localDeviceId"),
-                hass=hass,
-            )
+            entity_id = ENTITY_ID_FORMAT.format(slugify(device_settings.get("localDeviceId")))
+            # entity_id = generate_entity_id(
+            #     ENTITY_ID_FORMAT,
+            #     device_settings.get("localDeviceId"),
+            #     hass=hass,
+            # )
             light_c: EntityComponent = hass.data["light"]
             if light_c.get_entity(
                 entity_id
@@ -341,13 +338,11 @@ class KlyqaLight(LightEntity):
         self.rooms = rooms
         self.timers = timers
         self.routines = routines
-        self._attr_supported_color_modes = {
-            COLOR_MODE_BRIGHTNESS,
-            COLOR_MODE_COLOR_TEMP,
-            COLOR_MODE_RGB,
-            # COLOR_MODE_RGBWW
-        }
-        self._attr_effect_list = [x["label"] for x in SCENES]
+        self._attr_supported_color_modes = {COLOR_MODE_BRIGHTNESS}
+        # COLOR_MODE_COLOR_TEMP,
+        # COLOR_MODE_RGB,
+        # # COLOR_MODE_RGBWW
+        self._attr_effect_list = []  # [x["label"] for x in SCENES]
         self.config_entry = config_entry
         """Entity state will be updated after adding the entity."""
 
@@ -367,6 +362,29 @@ class KlyqaLight(LightEntity):
         )
 
         self.device_config = json.loads(response_object.text)
+
+        if "deviceTraits" in self.device_config and (
+            device_traits := self.device_config.get("deviceTraits")
+        ):
+            if [
+                x
+                for x in device_traits
+                if "msg_key" in x and x["msg_key"] == "temperature"
+            ]:
+                self._attr_supported_color_modes.add(COLOR_MODE_COLOR_TEMP)
+                self._attr_supported_features |= SUPPORT_COLOR_TEMP
+
+            if [x for x in device_traits if "msg_key" in x and x["msg_key"] == "color"]:
+                self._attr_supported_color_modes.add(COLOR_MODE_RGB)
+                self._attr_supported_features |= SUPPORT_COLOR | SUPPORT_EFFECT
+                self._attr_effect_list = [x["label"] for x in SCENES]
+            else:
+                self._attr_effect_list = [x["label"] for x in SCENES if "cwww" in x]
+        # if "segments" in self.device_config:
+        #     if "temp" in self.device_config.get("segments"):
+
+        #     if "rgb" in self.device_config.get("segments"):
+        #     else:
 
         self.settings = device_result[0]
         self._attr_name = self.settings.get("name")
@@ -685,7 +703,7 @@ class KlyqaLight(LightEntity):
 
         self._klyqa_device.state = state_complete
         self._attr_color_temp = (
-            color_temperature_kelvin_to_mired(state_complete["temperature"])
+            color_temperature_kelvin_to_mired(float(state_complete["temperature"]))
             if state_complete["temperature"]
             else 0
         )

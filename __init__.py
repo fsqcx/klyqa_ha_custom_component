@@ -58,6 +58,13 @@ async def async_setup(hass: HomeAssistant, yaml_config: ConfigType) -> bool:
     await component.async_setup(yaml_config)
     component.entries = {}
     component.remove_listeners = []
+
+    # with open(file,'r',encoding='utf-8') as r:
+    #     try:
+    #         hass.data[DOMAIN].local_device_configs = json.load(r)
+    #     except:
+    #         r.seek(0)
+    #         j = json.loads('['+r.read().replace('}{','},{')+']')[0]
     return True
 
 
@@ -106,6 +113,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             hass.data[DOMAIN].entries = {}
         hass.data[DOMAIN].entries[entry.entry_id] = klyqa_api
 
+    # await hass.async_add_executor_job(
+    #     klyqa_api.websocket,
+    # )
     if not await hass.async_add_executor_job(
         klyqa_api.login,
     ):

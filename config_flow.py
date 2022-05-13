@@ -42,10 +42,11 @@ user_step_data_schema = {
     vol.Required(CONF_PASSWORD, default="testpwd1"): str,
     vol.Required(CONF_SCAN_INTERVAL, default=60): int,
     vol.Required(CONF_SYNC_ROOMS, default=True): bool,
-    vol.Required(CONF_HOST, default="http://localhost:3000"): str,
+    vol.Required(CONF_HOST, default="https://app-api.test.qconnex.io"): str,
 }
 
-
+# http://localhost:3000
+# https://app-api.test.qconnex.io
 # user_step_data_schema = {
 #     vol.Required(CONF_USERNAME): str,
 #     vol.Required(CONF_PASSWORD): str,
