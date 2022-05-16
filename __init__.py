@@ -1,17 +1,6 @@
 """The Klyqa integration."""
 from __future__ import annotations
 
-"""
-Good integrations to look at:
-abode
-amrest
-accuweather
-met.no
-mobile_app
-helpers/device_registry
-helpers/entity_registry
-"""
-
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_TYPE, Platform
 from homeassistant.core import HomeAssistant
@@ -113,13 +102,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             hass.data[DOMAIN].entries = {}
         hass.data[DOMAIN].entries[entry.entry_id] = klyqa_api
 
-    # await hass.async_add_executor_job(
-    #     klyqa_api.websocket,
-    # )
     if not await hass.async_add_executor_job(
         klyqa_api.login,
     ):
         return False
+    await hass.async_add_executor_job(
+        klyqa_api.websocket,
+    )
 
     # coordinator = KlyqaDataUpdateCoordinator(
     #     hass, klyqa_api, timedelta(seconds=int(scan_interval))

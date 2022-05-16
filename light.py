@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 import socket
 
+import datetime
+
 from homeassistant.helpers.device_registry import DeviceEntryType
 from homeassistant.helpers.entity_registry import EntityRegistry
 from homeassistant.helpers import entity_registry as er
@@ -303,7 +305,7 @@ class KlyqaLight(LightEntity):
     config_entry: ConfigEntry | None = None
     entity_registry: EntityRegistry | None = None
     """entity added finished"""
-    _added_klyqa: bool = False
+    _adding_finished: bool = False
 
     # @callback
     # def _handle_coordinator_update(self) -> None:
@@ -360,8 +362,11 @@ class KlyqaLight(LightEntity):
             self._klyqa_api.request_get_beared,
             "/config/product/" + device_result[0]["productId"],
         )
-
-        self.device_config = json.loads(response_object.text)
+        try:
+            config = json.loads(response_object.text)
+            self.device_config = config
+        except Exception as e:
+            LOGGER.warn("Couldn't get device info for device "+device_result[0]["productId"]+". Take old config")
 
         if "deviceTraits" in self.device_config and (
             device_traits := self.device_config.get("deviceTraits")
@@ -599,10 +604,13 @@ class KlyqaLight(LightEntity):
 
     async def async_update_klyqa(self):
         """Fetch settings from klyqa cloud account."""
-        await self.hass.async_add_executor_job(self._klyqa_api.load_settings)
+        if (datetime.datetime.now() - self._klyqa_api._settings_loaded_ts >=
+        self.hass.data["light"].scan_interval):
+            await self.hass.async_add_executor_job(self._klyqa_api.load_settings)
+
         await self.async_update_settings()
 
-        if self._added_klyqa:
+        if self._adding_finished:
             for d in self._klyqa_api._settings["devices"]:
                 u_id = d["localDeviceId"]
                 light = [
@@ -624,21 +632,24 @@ class KlyqaLight(LightEntity):
             " (" + self.name + ")" if self.name else "",
         )
 
-        entity_registry = er.async_get(self.hass)
-        re = entity_registry.async_get_entity_id(Platform.LIGHT, DOMAIN, self.unique_id)
-        ent_id = entity_registry.async_get(re)
-        if ent_id:
-            entity_registry.async_update_entity(
-                entity_id=ent_id.entity_id, area_id="wohnzimmer"
-            )
+        # entity_registry = er.async_get(self.hass)
+        # re = entity_registry.async_get_entity_id(Platform.LIGHT, DOMAIN, self.unique_id)
+        # ent_id = entity_registry.async_get(re)
+        # if ent_id:
+        #     entity_registry.async_update_entity(
+        #         entity_id=ent_id.entity_id, area_id="wohnzimmer"
+        #     )
 
         await self.async_update_klyqa()
         # ret = await self.hass.async_add_executor_job(
         #     ft.partial(self._klyqa_api.send_to_bulb, "--request", u_id=self.u_id)
         # )
 
-        ret = await self._klyqa_api.send_to_bulb("--request", u_id=self.u_id)
-        self._update_state(ret)
+        # ret = await self._klyqa_api.send_to_bulb("--request", u_id=self.u_id)
+        await self._klyqa_api.request_update_device_state(device_id = self.u_id)
+        ret = self._klyqa_api._device_states.get(self.u_id)
+        if ret:
+            self._update_state(ret["state"])
 
     async def async_update2(self, *args, **kwargs):
         """Fetch new state data for this light. Called by HA."""
@@ -657,13 +668,17 @@ class KlyqaLight(LightEntity):
             )
 
         ret = await self._klyqa_api.send_to_bulb("--request", u_id=self.u_id)
-        self._update_state(ret)
+
+        await self._klyqa_api.request_update_device_state(device_id = self.u_id)
+        ret = self._klyqa_api._device_states.get(self.u_id)
+        if ret:
+            self._update_state(ret)
         self.async_write_ha_state()
 
     async def async_added_to_hass(self) -> None:
         """Set up trigger automation service."""
         await super().async_added_to_hass()
-        self._added_klyqa = True
+        self._adding_finished = True
 
     def _update_state(self, state_complete):
         """Process state request response from the bulb to the entity state."""
