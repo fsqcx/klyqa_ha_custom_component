@@ -71,11 +71,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     password = entry.data.get(CONF_PASSWORD)
     host = entry.data.get(CONF_HOST)
     scan_interval = entry.data.get(CONF_SCAN_INTERVAL)
+    if isinstance(scan_interval, float):
+        hass.data["light"].scan_interval = timedelta(seconds=scan_interval)
     sync_rooms = (
         entry.data.get(CONF_SYNC_ROOMS) if entry.data.get(CONF_SYNC_ROOMS) else False
     )
     klyqa_api: Klyqa = None
-    # if DOMAIN in hass.data:
     if (
         DOMAIN in hass.data
         and hasattr(hass.data[DOMAIN], "entries")
@@ -88,12 +89,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         klyqa_api._password = password
         klyqa_api._host = host
         klyqa_api.sync_rooms = sync_rooms
+        klyqa_api.scan_interval
     else:
         klyqa_api: Klyqa = await hass.async_add_executor_job(
             Klyqa,
             username,
             password,
             host,
+            hass.data["light"].scan_interval,
             hass,
             sync_rooms,
         )

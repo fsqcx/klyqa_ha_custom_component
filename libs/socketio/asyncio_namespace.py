@@ -1,6 +1,6 @@
 import asyncio
 
-from socketio import namespace
+from . import namespace
 
 
 class AsyncNamespace(namespace.Namespace):
@@ -16,6 +16,7 @@ class AsyncNamespace(namespace.Namespace):
                       handlers defined in this class. If this argument is
                       omitted, the default namespace is used.
     """
+
     def is_asyncio_based(self):
         return True
 
@@ -29,7 +30,7 @@ class AsyncNamespace(namespace.Namespace):
 
         Note: this method is a coroutine.
         """
-        handler_name = 'on_' + event
+        handler_name = "on_" + event
         if hasattr(self, handler_name):
             handler = getattr(self, handler_name)
             if asyncio.iscoroutinefunction(handler) is True:
@@ -41,8 +42,16 @@ class AsyncNamespace(namespace.Namespace):
                 ret = handler(*args)
             return ret
 
-    async def emit(self, event, data=None, to=None, room=None, skip_sid=None,
-                   namespace=None, callback=None):
+    async def emit(
+        self,
+        event,
+        data=None,
+        to=None,
+        room=None,
+        skip_sid=None,
+        namespace=None,
+        callback=None,
+    ):
         """Emit a custom event to one or more connected clients.
 
         The only difference with the :func:`socketio.Server.emit` method is
@@ -51,13 +60,19 @@ class AsyncNamespace(namespace.Namespace):
 
         Note: this method is a coroutine.
         """
-        return await self.server.emit(event, data=data, to=to, room=room,
-                                      skip_sid=skip_sid,
-                                      namespace=namespace or self.namespace,
-                                      callback=callback)
+        return await self.server.emit(
+            event,
+            data=data,
+            to=to,
+            room=room,
+            skip_sid=skip_sid,
+            namespace=namespace or self.namespace,
+            callback=callback,
+        )
 
-    async def send(self, data, to=None, room=None, skip_sid=None,
-                   namespace=None, callback=None):
+    async def send(
+        self, data, to=None, room=None, skip_sid=None, namespace=None, callback=None
+    ):
         """Send a message to one or more connected clients.
 
         The only difference with the :func:`socketio.Server.send` method is
@@ -66,22 +81,32 @@ class AsyncNamespace(namespace.Namespace):
 
         Note: this method is a coroutine.
         """
-        return await self.server.send(data, to=to, room=room,
-                                      skip_sid=skip_sid,
-                                      namespace=namespace or self.namespace,
-                                      callback=callback)
+        return await self.server.send(
+            data,
+            to=to,
+            room=room,
+            skip_sid=skip_sid,
+            namespace=namespace or self.namespace,
+            callback=callback,
+        )
 
-    async def call(self, event, data=None, to=None, sid=None, namespace=None,
-                   timeout=None):
+    async def call(
+        self, event, data=None, to=None, sid=None, namespace=None, timeout=None
+    ):
         """Emit a custom event to a client and wait for the response.
 
         The only difference with the :func:`socketio.Server.call` method is
         that when the ``namespace`` argument is not given the namespace
         associated with the class is used.
         """
-        return await self.server.call(event, data=data, to=to, sid=sid,
-                                      namespace=namespace or self.namespace,
-                                      timeout=timeout)
+        return await self.server.call(
+            event,
+            data=data,
+            to=to,
+            sid=sid,
+            namespace=namespace or self.namespace,
+            timeout=timeout,
+        )
 
     async def close_room(self, room, namespace=None):
         """Close a room.
@@ -92,8 +117,7 @@ class AsyncNamespace(namespace.Namespace):
 
         Note: this method is a coroutine.
         """
-        return await self.server.close_room(
-            room, namespace=namespace or self.namespace)
+        return await self.server.close_room(room, namespace=namespace or self.namespace)
 
     async def get_session(self, sid, namespace=None):
         """Return the user session for a client.
@@ -104,8 +128,7 @@ class AsyncNamespace(namespace.Namespace):
 
         Note: this method is a coroutine.
         """
-        return await self.server.get_session(
-            sid, namespace=namespace or self.namespace)
+        return await self.server.get_session(sid, namespace=namespace or self.namespace)
 
     async def save_session(self, sid, session, namespace=None):
         """Store the user session for a client.
@@ -117,7 +140,8 @@ class AsyncNamespace(namespace.Namespace):
         Note: this method is a coroutine.
         """
         return await self.server.save_session(
-            sid, session, namespace=namespace or self.namespace)
+            sid, session, namespace=namespace or self.namespace
+        )
 
     def session(self, sid, namespace=None):
         """Return the user session for a client with context manager syntax.
@@ -137,8 +161,7 @@ class AsyncNamespace(namespace.Namespace):
 
         Note: this method is a coroutine.
         """
-        return await self.server.disconnect(
-            sid, namespace=namespace or self.namespace)
+        return await self.server.disconnect(sid, namespace=namespace or self.namespace)
 
 
 class AsyncClientNamespace(namespace.ClientNamespace):
@@ -154,6 +177,7 @@ class AsyncClientNamespace(namespace.ClientNamespace):
                       handlers defined in this class. If this argument is
                       omitted, the default namespace is used.
     """
+
     def is_asyncio_based(self):
         return True
 
@@ -167,7 +191,7 @@ class AsyncClientNamespace(namespace.ClientNamespace):
 
         Note: this method is a coroutine.
         """
-        handler_name = 'on_' + event
+        handler_name = "on_" + event
         if hasattr(self, handler_name):
             handler = getattr(self, handler_name)
             if asyncio.iscoroutinefunction(handler) is True:
@@ -188,9 +212,9 @@ class AsyncClientNamespace(namespace.ClientNamespace):
 
         Note: this method is a coroutine.
         """
-        return await self.client.emit(event, data=data,
-                                      namespace=namespace or self.namespace,
-                                      callback=callback)
+        return await self.client.emit(
+            event, data=data, namespace=namespace or self.namespace, callback=callback
+        )
 
     async def send(self, data, namespace=None, callback=None):
         """Send a message to the server.
@@ -201,9 +225,9 @@ class AsyncClientNamespace(namespace.ClientNamespace):
 
         Note: this method is a coroutine.
         """
-        return await self.client.send(data,
-                                      namespace=namespace or self.namespace,
-                                      callback=callback)
+        return await self.client.send(
+            data, namespace=namespace or self.namespace, callback=callback
+        )
 
     async def call(self, event, data=None, namespace=None, timeout=None):
         """Emit a custom event to the server and wait for the response.
@@ -212,9 +236,9 @@ class AsyncClientNamespace(namespace.ClientNamespace):
         that when the ``namespace`` argument is not given the namespace
         associated with the class is used.
         """
-        return await self.client.call(event, data=data,
-                                      namespace=namespace or self.namespace,
-                                      timeout=timeout)
+        return await self.client.call(
+            event, data=data, namespace=namespace or self.namespace, timeout=timeout
+        )
 
     async def disconnect(self):
         """Disconnect a client.

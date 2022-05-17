@@ -1,7 +1,7 @@
 import asyncio
 import pickle
 
-from socketio.asyncio_pubsub_manager import AsyncPubSubManager
+from .asyncio_pubsub_manager import AsyncPubSubManager
 
 try:
     import aio_pika
@@ -35,14 +35,21 @@ class AsyncAioPikaManager(AsyncPubSubManager):  # pragma: no cover
                        and receiving.
     """
 
-    name = 'asyncaiopika'
+    name = "asyncaiopika"
 
-    def __init__(self, url='amqp://guest:guest@localhost:5672//',
-                 channel='socketio', write_only=False, logger=None):
+    def __init__(
+        self,
+        url="amqp://guest:guest@localhost:5672//",
+        channel="socketio",
+        write_only=False,
+        logger=None,
+    ):
         if aio_pika is None:
-            raise RuntimeError('aio_pika package is not installed '
-                               '(Run "pip install aio_pika" in your '
-                               'virtualenv).')
+            raise RuntimeError(
+                "aio_pika package is not installed "
+                '(Run "pip install aio_pika" in your '
+                "virtualenv)."
+            )
         self.url = url
         self.listener_connection = None
         self.listener_channel = None
@@ -56,12 +63,14 @@ class AsyncAioPikaManager(AsyncPubSubManager):  # pragma: no cover
         return await connection.channel()
 
     async def _exchange(self, channel):
-        return await channel.declare_exchange(self.channel,
-                                              aio_pika.ExchangeType.FANOUT)
+        return await channel.declare_exchange(
+            self.channel, aio_pika.ExchangeType.FANOUT
+        )
 
     async def _queue(self, channel, exchange):
-        queue = await channel.declare_queue(durable=False,
-                                            arguments={'x-expires': 300000})
+        queue = await channel.declare_queue(
+            durable=False, arguments={"x-expires": 300000}
+        )
         await queue.bind(exchange)
         return queue
 
@@ -70,9 +79,10 @@ class AsyncAioPikaManager(AsyncPubSubManager):  # pragma: no cover
         channel = await self._channel(connection)
         exchange = await self._exchange(channel)
         await exchange.publish(
-            aio_pika.Message(body=pickle.dumps(data),
-                             delivery_mode=aio_pika.DeliveryMode.PERSISTENT),
-            routing_key='*'
+            aio_pika.Message(
+                body=pickle.dumps(data), delivery_mode=aio_pika.DeliveryMode.PERSISTENT
+            ),
+            routing_key="*",
         )
 
     async def _listen(self):
@@ -96,9 +106,11 @@ class AsyncAioPikaManager(AsyncPubSubManager):  # pragma: no cover
                         async with message.process():
                             yield pickle.loads(message.body)
             except Exception:
-                self._get_logger().error('Cannot receive from rabbitmq... '
-                                         'retrying in '
-                                         '{} secs'.format(retry_sleep))
+                self._get_logger().error(
+                    "Cannot receive from rabbitmq... "
+                    "retrying in "
+                    "{} secs".format(retry_sleep)
+                )
                 self.listener_connection = None
                 await asyncio.sleep(retry_sleep)
                 retry_sleep *= 2

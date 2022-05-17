@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+from asyncio import transports
 import datetime
 import json
 import pickle
@@ -13,6 +14,10 @@ import os
 import errno
 import threading
 from jsonschema import validate
+from homeassistant.components.light import (
+    ENTITY_ID_FORMAT,
+)
+from homeassistant.util import slugify
 
 import websockets
 import uuid
@@ -237,10 +242,13 @@ class Connection:
     remote_iv = ""
     u_id = ""
 
+
 """class used for device states send by local lamp request or websocket"""
+
+
 class KlyqaDeviceState:
     state = {}
-    ts: None # timestamp to be read by the bulb entities and determines
+    ts: None  # timestamp to be read by the bulb entities and determines
 
 
 def send_msg(socket, message, sending_aes) -> bool:
@@ -364,6 +372,7 @@ class Klyqa:
     _device_states = {}
 
     __search_lights_mutex = threading.Lock()
+    __settings_mutex = threading.Lock()
     # __sending_mutex = threading.Lock() """exclude searching from multiple sending threads"""
     __send_search_mutex = threading.Lock()
     __send_workers = []
@@ -421,6 +430,7 @@ class Klyqa:
         username,
         password,
         host,
+        scan_interval,
         hass: HomeAssistant = None,
         sync_rooms=True,
     ):
@@ -429,6 +439,7 @@ class Klyqa:
         self.sync_rooms: bool = sync_rooms
         self._host = host
         self.hass = hass
+        self.scan_interval = scan_interval
 
     def login(self) -> bool:
         """Login to klyqa account."""
@@ -485,9 +496,8 @@ class Klyqa:
         response_object = self.request_get(url, params, headers=self._bearer, **kwargs)
         return response_object
 
-
     async def request_update_device_state(self, device_id):
-        ret = await self.send_to_bulb("--request", u_id = device_id)
+        ret = await self.send_to_bulb("--request", u_id=device_id)
 
         # Validate will raise exception if given json is not
         # what is described in schema.
@@ -495,10 +505,12 @@ class Klyqa:
         #     validate(instance=ret, schema=request_json_schema)
         # except:
         #     return
-        response = {"deviceId":device_id, "clientId":"", "state": ret}
-        self.update_device_state(response, update_ha_entity_state = False)
+        response = {"deviceId": device_id, "clientId": "", "state": ret}
+        self.update_device_state(response, update_ha_entity_state=False)
 
-    def update_device_state(self, device_state: dict = {}, update_ha_entity_state = False):
+    def update_device_state(
+        self, device_state: dict = {}, update_ha_entity_state=False
+    ):
         if not isinstance(device_state, dict) or not device_state.get("deviceId"):
             return
         self._device_states[device_state.get("deviceId")] = device_state
@@ -516,7 +528,6 @@ class Klyqa:
             if ent:
                 ent.schedule_update_ha_state(force_refresh=True)
 
-
     def websocket(self):
         # self.websocket = websockets.unix_connect("https://app-api.test.qconnex.io")
 
@@ -525,7 +536,11 @@ class Klyqa:
         # await websocket.recv()
 
         # standard Python, ssl_verify=False
-        self.sio = socketio.Client(reconnection_delay = 3)
+        self.sio = socketio.Client(
+            reconnection_delay=3,
+            logger=True,
+            engineio_logger=True,
+        )
 
         class Profile:
             smoId: str
@@ -546,8 +561,8 @@ class Klyqa:
 
                     except Exception as ex:
                         print("Websocket emit error... resend: " + str(ex))
-                        if self.sio.eio.state == 'disconnected':
-                            break
+                        # if self.sio.eio.state == "disconnected":
+                        #     break
                         retry = retry + 1
 
             light_c: EntityComponent = self.hass.data.get("light")
@@ -556,7 +571,9 @@ class Klyqa:
 
             for device_state in self._device_states:
                 # device_state.ts = 0 # invalid timestamp, there on
-                entity: Entity = light_c.get_entity("light." + self._device_states.get(device_state).get("deviceId"))
+                entity: Entity = light_c.get_entity(
+                    "light." + self._device_states.get(device_state).get("deviceId")
+                )
                 if entity:
                     entity.schedule_update_ha_state(force_refresh=True)
 
@@ -577,15 +594,25 @@ class Klyqa:
 
         @self.sio.on(SocketEvents.SYNC_DEVICE_STATE)
         def catch_sync_device_state(data):
+            print("deviceState")
             if data.get("deviceState"):
+                print("sync deviceState")
                 for state in data.get("deviceState"):
-                    ent: Entity = light_c.get_entity("light." + state["deviceId"])
+                    print("update ent " + state["deviceId"].lower())
+                    ent: Entity = light_c.get_entity(
+                        entity_id=ENTITY_ID_FORMAT.format(
+                            slugify(state["deviceId"])
+                        ).lower()
+                    )
+                    #     "light." + state["deviceId"].lower()
+                    # )
                     if ent:
+                        print("update ent now")
                         ent.schedule_update_ha_state(force_refresh=True)
 
         @self.sio.on(SocketEvents.DEVICE_STATE)
         def catch_device_state(data):
-            self.update_device_state(data, update_ha_entity_state = True)
+            self.update_device_state(data, update_ha_entity_state=True)
 
         @self.sio.on(SocketEvents.SYNC_SETTINGS)
         def catch_sync_settings(data):
@@ -600,7 +627,9 @@ class Klyqa:
         while retry < 14:
             try:
                 self.sio.connect(
-                    "https://app-api.test.qconnex.io", wait_timeout=1
+                    "https://app-api.test.qconnex.io",
+                    # transports=["polling"],
+                    wait_timeout=1,
                 )  # , auth=profile.smoId
                 break
 
@@ -624,7 +653,23 @@ class Klyqa:
     #     headers: createHeaders({ accountToken, requestId }),
     #   })
 
+    def load_settings_eco(self) -> bool:
+        if not self.__settings_mutex.acquire(blocking=True, timeout=11000):
+            return False
+        ret = False
+        if datetime.datetime.now() - self._settings_loaded_ts >= self.scan_interval:
+            ret = self.__load_settings()
+        self.__settings_mutex.release()
+        return ret
+
     def load_settings(self) -> bool:
+        if not self.__settings_mutex.acquire(blocking=True, timeout=11000):
+            return False
+        ret = self.__load_settings()
+        self.__settings_mutex.release()
+        return ret
+
+    def __load_settings(self) -> bool:
         """Load settings from klyqa account."""
         settings_response = self.request_get_beared("/settings")
         if settings_response.status_code != 200:
