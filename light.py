@@ -483,7 +483,7 @@ class KlyqaLight(LightEntity):
                 if len(commands.split(";")) > 2:
                     commands += "l 0;"
 
-                ret = await self._klyqa_api.send_to_bulb(
+                ret = await self._klyqa_api.local_send_to_bulb(
                     "--routine_id",
                     "0",
                     "--routine_scene",
@@ -495,7 +495,7 @@ class KlyqaLight(LightEntity):
                 )
                 # ret = await self.hass.async_add_executor_job(
                 #     ft.partial(
-                #         self._klyqa_api.send_to_bulb,
+                #         self._klyqa_api.local_send_to_bulb,
                 #         "--routine_id",
                 #         "0",
                 #         "--routine_scene",
@@ -557,9 +557,9 @@ class KlyqaLight(LightEntity):
             )
 
             # ret = await self.hass.async_add_executor_job(
-            #     ft.partial(self._klyqa_api.send_to_bulb, *(args), u_id=self.u_id)
+            #     ft.partial(self._klyqa_api.local_send_to_bulb, *(args), u_id=self.u_id)
             # )
-            ret = await self._klyqa_api.send_to_bulb(*(args), u_id=self.u_id)
+            ret = await self._klyqa_api.local_send_to_bulb(*(args), u_id=self.u_id)
 
         # if ret:
         args = ["--power", "on"]
@@ -577,9 +577,9 @@ class KlyqaLight(LightEntity):
         )
 
         # ret = await self.hass.async_add_executor_job(
-        #     ft.partial(self._klyqa_api.send_to_bulb, *(args), u_id=self.u_id)
+        #     ft.partial(self._klyqa_api.local_send_to_bulb, *(args), u_id=self.u_id)
         # )
-        ret = await self._klyqa_api.send_to_bulb(*(args), u_id=self.u_id)
+        ret = await self._klyqa_api.local_send_to_bulb(*(args), u_id=self.u_id)
         # self._handle_coordinator_update()
         await self.async_update()
 
@@ -598,10 +598,10 @@ class KlyqaLight(LightEntity):
         )
 
         # ret = await self.hass.async_add_executor_job(
-        #     ft.partial(self._klyqa_api.send_to_bulb, *(args), u_id=self.u_id)
+        #     ft.partial(self._klyqa_api.local_send_to_bulb, *(args), u_id=self.u_id)
         # )
 
-        ret = await self._klyqa_api.send_to_bulb(*(args), u_id=self.u_id)
+        ret = await self._klyqa_api.local_send_to_bulb(*(args), u_id=self.u_id)
         if ret:
             pass
         # self._handle_coordinator_update()  # Update the data
@@ -651,14 +651,33 @@ class KlyqaLight(LightEntity):
 
         await self.async_update_klyqa()
         # ret = await self.hass.async_add_executor_job(
-        #     ft.partial(self._klyqa_api.send_to_bulb, "--request", u_id=self.u_id)
+        #     ft.partial(self._klyqa_api.local_send_to_bulb, "--request", u_id=self.u_id)
         # )
 
-        # ret = await self._klyqa_api.send_to_bulb("--request", u_id=self.u_id)
-        await self._klyqa_api.request_update_device_state(device_id=self.u_id)
-        ret = self._klyqa_api._device_states.get(self.u_id)
-        if ret:
-            self._update_state(ret["state"])
+        # ret = await self._klyqa_api.local_send_to_bulb("--request", u_id=self.u_id)
+
+        state = await self._klyqa_api.get_cur_device_state_for_ha(self.u_id)
+        if state:
+            self._update_state(state["state"])
+
+        # state = self._klyqa_api.get_cur_device_state(self.u_id)
+
+        # """ take the state setted by the network into the ha entity. """
+        # if not state or (
+        #     "apply_current_state_to_ha_entity" in state
+        #     and not state["apply_current_state_to_ha_entity"]
+        # ):
+        #     await self._klyqa_api.request_update_device_state(device_id=self.u_id)
+
+        # state = await self._klyqa_api.get_cur_device_state(self.u_id)
+
+        # if state:
+        #     self._update_state(state["state"])
+        #     if (
+        #         "apply_current_state_to_ha_entity" in state
+        #         and not state["apply_current_state_to_ha_entity"]
+        #     ):
+        #         state["apply_current_state_to_ha_entity"] = False
 
     async def async_update2(self, *args, **kwargs):
         """Fetch new state data for this light. Called by HA."""
@@ -676,7 +695,7 @@ class KlyqaLight(LightEntity):
                 entity_id=ent_id.entity_id, area_id="wohnzimmer"
             )
 
-        ret = await self._klyqa_api.send_to_bulb("--request", u_id=self.u_id)
+        ret = await self._klyqa_api.local_send_to_bulb("--request", u_id=self.u_id)
 
         await self._klyqa_api.request_update_device_state(device_id=self.u_id)
         ret = self._klyqa_api._device_states.get(self.u_id)

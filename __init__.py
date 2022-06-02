@@ -32,6 +32,8 @@ from homeassistant.const import (
     CONF_SCAN_INTERVAL,
 )
 
+"""python minimum version required: 3.5.0"""
+
 
 # TODO List the platforms that you want to support.
 # For your initial PR, limit it to 1 platform.
@@ -71,7 +73,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     password = entry.data.get(CONF_PASSWORD)
     host = entry.data.get(CONF_HOST)
     scan_interval = entry.data.get(CONF_SCAN_INTERVAL)
-    if isinstance(scan_interval, float):
+    if isinstance(scan_interval, int):
         hass.data["light"].scan_interval = timedelta(seconds=scan_interval)
     sync_rooms = (
         entry.data.get(CONF_SYNC_ROOMS) if entry.data.get(CONF_SYNC_ROOMS) else False
