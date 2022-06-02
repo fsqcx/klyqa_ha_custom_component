@@ -657,7 +657,7 @@ class KlyqaLight(LightEntity):
         # ret = await self._klyqa_api.local_send_to_bulb("--request", u_id=self.u_id)
 
         state = await self._klyqa_api.get_cur_device_state_for_ha(self.u_id)
-        if state:
+        if state and "state" in state:
             self._update_state(state["state"])
 
         # state = self._klyqa_api.get_cur_device_state(self.u_id)
