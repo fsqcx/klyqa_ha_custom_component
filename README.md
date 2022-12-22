@@ -1,5 +1,12 @@
-# Klyqa Home Assistant Custom Integration
 
+<br /><br />
+This repository is outdated and won't receive any updates!
+
+Please go to the Klyqa github repository:
+
+[https://github.com/klyqa/home-assistant-integration](https://github.com/klyqa/home-assistant-integration)
+<br /><br /><br /><br />
+# Klyqa Home Assistant Custom Integration
 ## Lamp Support
 - Scene effects
 - Lamp temperature
